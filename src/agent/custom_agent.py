@@ -210,7 +210,6 @@ class CustomAgent(Agent):
         """Get next action from LLM based on current state"""
 
         ai_message = self.llm.invoke(input_messages)
-        self.message_manager._add_message_with_tokens(ai_message)
 
         if hasattr(ai_message, "reasoning_content"):
             logger.info("🤯 Start Deep Thinking: ")
@@ -235,6 +234,7 @@ class CustomAgent(Agent):
         if len(parsed.action) > self.settings.max_actions_per_step:
             parsed.action = parsed.action[: self.settings.max_actions_per_step]
         self._log_response(parsed)
+        self.message_manager._add_message_with_tokens(ai_message)
         return parsed
 
     async def _run_planner(self) -> Optional[str]:
@@ -335,6 +335,7 @@ class CustomAgent(Agent):
                 await self._raise_if_stopped_or_paused()
             except Exception as e:
                 # model call failed, remove last state message from history
+                pdb.set_trace()
                 self.message_manager._remove_state_message_by_index(-1)
                 raise e
 
