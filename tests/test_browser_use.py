@@ -133,11 +133,11 @@ async def test_browser_use_custom():
         api_key=os.getenv("GOOGLE_API_KEY", "")
     )
 
-    # llm = utils.get_llm_model(
-    #     provider="deepseek",
-    #     model_name="deepseek-reasoner",
-    #     temperature=0.8
-    # )
+    llm = utils.get_llm_model(
+        provider="deepseek",
+        model_name="deepseek-reasoner",
+        temperature=0.8
+    )
 
     # llm = utils.get_llm_model(
     #     provider="deepseek",
