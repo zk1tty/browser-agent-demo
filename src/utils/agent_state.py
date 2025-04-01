@@ -1,5 +1,6 @@
 import asyncio
 
+
 class AgentState:
     _instance = None
 

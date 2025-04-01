@@ -208,8 +208,8 @@ class CustomAgent(Agent):
     @time_execution_async("--get_next_action")
     async def get_next_action(self, input_messages: list[BaseMessage]) -> AgentOutput:
         """Get next action from LLM based on current state"""
-
-        ai_message = self.llm.invoke(input_messages)
+        fixed_input_messages = self._convert_input_messages(input_messages)
+        ai_message = self.llm.invoke(fixed_input_messages)
         self.message_manager._add_message_with_tokens(ai_message)
 
         if hasattr(ai_message, "reasoning_content"):
@@ -222,10 +222,16 @@ class CustomAgent(Agent):
         else:
             ai_content = ai_message.content
 
-        ai_content = ai_content.replace("```json", "").replace("```", "")
-        ai_content = repair_json(ai_content)
-        parsed_json = json.loads(ai_content)
-        parsed: AgentOutput = self.AgentOutput(**parsed_json)
+        try:
+            ai_content = ai_content.replace("```json", "").replace("```", "")
+            ai_content = repair_json(ai_content)
+            parsed_json = json.loads(ai_content)
+            parsed: AgentOutput = self.AgentOutput(**parsed_json)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            logger.debug(ai_message.content)
+            raise ValueError('Could not parse response.')
 
         if parsed is None:
             logger.debug(ai_message.content)
