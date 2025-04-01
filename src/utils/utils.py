@@ -14,7 +14,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_ollama import ChatOllama
 from langchain_openai import AzureChatOpenAI, ChatOpenAI
 
-from .llm import DeepSeekR1ChatOpenAI, DeepSeekR1ChatOllama, UnboundChatOpenAI
+from .llm import DeepSeekR1ChatOpenAI, DeepSeekR1ChatOllama
 
 PROVIDER_DISPLAY_NAMES = {
     "openai": "OpenAI",
@@ -162,15 +162,10 @@ def get_llm_model(provider: str, **kwargs):
             api_key=os.getenv("MOONSHOT_API_KEY"),
         )
     elif provider == "unbound":
-        if not kwargs.get("base_url", ""):
-            base_url = os.getenv("UNBOUND_ENDPOINT", "https://api.getunbound.ai")
-        else:
-            base_url = kwargs.get("base_url")
-
-        return UnboundChatOpenAI(
+        return ChatOpenAI(
             model=kwargs.get("model_name", "gpt-4o-mini"),
             temperature=kwargs.get("temperature", 0.0),
-            base_url=base_url,
+            base_url = os.getenv("UNBOUND_ENDPOINT", "https://api.getunbound.ai"),
             api_key=api_key,
         )
     else:
