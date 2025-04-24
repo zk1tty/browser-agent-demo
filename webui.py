@@ -342,7 +342,15 @@ async def run_org_agent(
                 chrome_path = None
             chrome_user_data = os.getenv("CHROME_USER_DATA", None)
             if chrome_user_data:
-                extra_chromium_args += [f"--user-data-dir={chrome_user_data}"]
+                extra_chromium_args += [
+                    f"--user-data-dir={chrome_user_data}",
+                    "--profile-directory=Default",
+                    "--no-first-run",
+                    "--no-default-browser-check",
+                    "--disable-features=IsolateOrigins,site-per-process",
+                    "--disable-web-security",
+                    "--disable-site-isolation-trials"
+                ]
         else:
             chrome_path = None
 
@@ -445,7 +453,15 @@ async def run_custom_agent(
                 chrome_path = None
             chrome_user_data = os.getenv("CHROME_USER_DATA", None)
             if chrome_user_data:
-                extra_chromium_args += [f"--user-data-dir={chrome_user_data}"]
+                extra_chromium_args += [
+                    f"--user-data-dir={chrome_user_data}",
+                    "--profile-directory=Default",
+                    "--no-first-run",
+                    "--no-default-browser-check",
+                    "--disable-features=IsolateOrigins,site-per-process",
+                    "--disable-web-security",
+                    "--disable-site-isolation-trials"
+                ]
         else:
             chrome_path = None
 
