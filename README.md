@@ -14,8 +14,52 @@ Key features of Rebrowse:
 - Support for cross-application workflows
 - Easy sharing and collaboration
 
+Follow [me on twitter](https://x.com/n0rizkitty) to see the update!
 
-Follow [me on twitter]((https://x.com/n0rizkitty)) to see the udpate!
+---
+## How to connect Browser Agent to your personal Chrome
+
+<img src="./assets/BrowserAI-Setting.png" alt="Rebrowse Title" width="full"/>
+
+### Custom Chrome Configuration
+
+To allow the agent to use your personal Chrome browser, you need to start Chrome with specific flags. Here's how to do it:
+
+1. First, identify your Chrome application path:
+   - macOS: `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`
+   - Windows: `C:\Program Files\Google\Chrome\Application\chrome.exe`
+   - Linux: `/usr/bin/google-chrome`
+
+2. Execute Chrome with the following flags:
+```bash
+# macOS example
+/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome \
+--remote-debugging-port=9222 \
+--profile-directory=Default \
+--no-first-run \
+--no-default-browser-check \
+--disable-features=IsolateOrigins,site-per-process \
+--disable-web-security \
+--disable-site-isolation-trials \
+--disable-blink-features=AutomationControlled \
+--disable-features=IsolateOrigins,site-per-process,LavaMoat \
+--disable-extensions \
+--disable-gpu \
+--no-sandbox \
+--disable-setuid-sandbox \
+--disable-dev-shm-usage \
+--disable-software-rasterizer \
+--disable-features=BlockInsecurePrivateNetworkRequests \
+--disable-features=CrossSiteDocumentBlockingIfIsolating \
+--disable-features=CrossSiteDocumentBlockingAlways
+```
+
+These flags are necessary to:
+- Enable remote debugging
+- Disable security features that might interfere with automation
+- Disable sandboxing and other restrictions
+- Allow cross-origin requests
+- Disable automation detection
 
 ---
 This project builds upon the foundation of the [browser-use](https://github.com/browser-use/browser-use), which is designed to make websites accessible for AI agents.
@@ -138,179 +182,3 @@ CHROME_PERSISTENT_SESSION=true docker compose up --build
 4. Access the Application:
 - Web Interface: Open `http://localhost:7788` in your browser
 - VNC Viewer (for watching browser interactions): Open `http://localhost:6080/vnc.html`
-  - Default VNC password: "youvncpassword"
-  - Can be changed by setting `VNC_PASSWORD` in your `.env` file
-
-## Usage
-
-### Local Setup
-1.  **Run the WebUI:**
-    After completing the installation steps above, start the application:
-    ```bash
-    python webui.py --ip 127.0.0.1 --port 7788
-    ```
-2. WebUI options:
-   - `--ip`: The IP address to bind the WebUI to. Default is `127.0.0.1`.
-   - `--port`: The port to bind the WebUI to. Default is `7788`.
-   - `--theme`: The theme for the user interface. Default is `Ocean`.
-     - **Default**: The standard theme with a balanced design.
-     - **Soft**: A gentle, muted color scheme for a relaxed viewing experience.
-     - **Monochrome**: A grayscale theme with minimal color for simplicity and focus.
-     - **Glass**: A sleek, semi-transparent design for a modern appearance.
-     - **Origin**: A classic, retro-inspired theme for a nostalgic feel.
-     - **Citrus**: A vibrant, citrus-inspired palette with bright and fresh colors.
-     - **Ocean** (default): A blue, ocean-inspired theme providing a calming effect.
-   - `--dark-mode`: Enables dark mode for the user interface.
-3.  **Access the WebUI:** Open your web browser and navigate to `http://127.0.0.1:7788`.
-4.  **Using Your Own Browser(Optional):**
-    - Set `CHROME_PATH` to the executable path of your browser and `CHROME_USER_DATA` to the user data directory of your browser. Leave `CHROME_USER_DATA` empty if you want to use local user data.
-      - Windows
-        ```env
-         CHROME_PATH="C:\Program Files\Google\Chrome\Application\chrome.exe"
-         CHROME_USER_DATA="C:\Users\YourUsername\AppData\Local\Google\Chrome\User Data"
-        ```
-        > Note: Replace `YourUsername` with your actual Windows username for Windows systems.
-      - Mac
-        ```env
-         CHROME_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-         CHROME_USER_DATA="/Users/YourUsername/Library/Application Support/Google/Chrome"
-        ```
-    - Close all Chrome windows
-    - Open the WebUI in a non-Chrome browser, such as Firefox or Edge. This is important because the persistent browser context will use the Chrome data when running the agent.
-    - Check the "Use Own Browser" option within the Browser Settings.
-5. **Keep Browser Open(Optional):**
-    - Set `CHROME_PERSISTENT_SESSION=true` in the `.env` file.
-
-### Docker Setup
-1. **Environment Variables:**
-   - All configuration is done through the `.env` file
-   - Available environment variables:
-     ```
-     # LLM API Keys
-     OPENAI_API_KEY=your_key_here
-     ANTHROPIC_API_KEY=your_key_here
-     GOOGLE_API_KEY=your_key_here
-
-     # Browser Settings
-     CHROME_PERSISTENT_SESSION=true   # Set to true to keep browser open between AI tasks
-     RESOLUTION=1920x1080x24         # Custom resolution format: WIDTHxHEIGHTxDEPTH
-     RESOLUTION_WIDTH=1920           # Custom width in pixels
-     RESOLUTION_HEIGHT=1080          # Custom height in pixels
-
-     # VNC Settings
-     VNC_PASSWORD=your_vnc_password  # Optional, defaults to "vncpassword"
-     ```
-
-2. **Platform Support:**
-   - Supports both AMD64 and ARM64 architectures
-   - For ARM64 systems (e.g., Apple Silicon Macs), the container will automatically use the appropriate image
-
-3. **Browser Persistence Modes:**
-   - **Default Mode (CHROME_PERSISTENT_SESSION=false):**
-     - Browser opens and closes with each AI task
-     - Clean state for each interaction
-     - Lower resource usage
-
-   - **Persistent Mode (CHROME_PERSISTENT_SESSION=true):**
-     - Browser stays open between AI tasks
-     - Maintains history and state
-     - Allows viewing previous AI interactions
-     - Set in `.env` file or via environment variable when starting container
-
-4. **Viewing Browser Interactions:**
-   - Access the noVNC viewer at `http://localhost:6080/vnc.html`
-   - Enter the VNC password (default: "vncpassword" or what you set in VNC_PASSWORD)
-   - Direct VNC access available on port 5900 (mapped to container port 5901)
-   - You can now see all browser interactions in real-time
-
-5. **Container Management:**
-   ```bash
-   # Start with persistent browser
-   CHROME_PERSISTENT_SESSION=true docker compose up -d
-
-   # Start with default mode (browser closes after tasks)
-   docker compose up -d
-
-   # View logs
-   docker compose logs -f
-
-   # Stop the container
-   docker compose down
-   ```
-
-## Changelog
-- [x] **2025/01/26:** Thanks to @vvincent1234. Now browser-use-webui can combine with DeepSeek-r1 to engage in deep thinking!
-- [x] **2025/01/10:** Thanks to @casistack. Now we have Docker Setup option and also Support keep browser open between tasks.[Video tutorial demo](https://github.com/browser-use/web-ui/issues/1#issuecomment-2582511750).
-- [x] **2025/01/06:** Thanks to @richard-devbot. A New and Well-Designed WebUI is released. [Video tutorial demo](https://github.com/warmshao/browser-use-webui/issues/1#issuecomment-2573393113).
-
-## Setting Up Custom Demo Environment
-
-### Prerequisites
-- Python 3.11 or higher
-- Git
-- Node.js (for frontend development)
-- Docker and Docker Compose (optional, for containerized setup)
-
-### Local Development Setup
-
-1. **Clone the Repository**
-```bash
-git clone https://github.com/your-username/rebrowse.git
-cd rebrowse
-```
-
-2. **Set Up Backend**
-```bash
-# Create and activate virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows: .\venv\Scripts\activate
-
-# Install dependencies
-pip install -r requirements.txt
-```
-
-3. **Set Up Frontend**
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-4. **Configure Environment Variables**
-Create a `.env` file in the root directory:
-```env
-# API Keys
-OPENAI_API_KEY=your_key_here
-ANTHROPIC_API_KEY=your_key_here
-GOOGLE_API_KEY=your_key_here
-
-# Development Settings
-DEBUG=true
-PORT=3000
-```
-
-5. **Start Development Servers**
-```bash
-# Terminal 1 - Backend
-python app.py
-
-# Terminal 2 - Frontend
-cd frontend
-npm run dev
-```
-
-6. **Access the Application**
-- Frontend: `http://localhost:3000`
-- Backend API: `http://localhost:8000`
-
-### Docker Development Setup
-
-1. **Build and Start Containers**
-```bash
-docker compose -f docker-compose.dev.yml up --build
-```
-
-2. **Access Development Environment**
-- Frontend: `http://localhost:3000`
-- Backend API: `http://localhost:8000`
-- VNC Viewer: `http://localhost:6080/vnc.html`
