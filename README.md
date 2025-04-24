@@ -1,12 +1,23 @@
-<img src="./assets/web-ui.png" alt="Browser Use Web UI" width="full"/>
+<img src="./assets/rebrowse-title.png" alt="Rebrowse Title" width="full"/>
 
 <br/>
 
-[![GitHub stars](https://img.shields.io/github/stars/browser-use/web-ui?style=social)](https://github.com/browser-use/web-ui/stargazers)
-[![Discord](https://img.shields.io/discord/1303749220842340412?color=7289DA&label=Discord&logo=discord&logoColor=white)](https://link.browser-use.com/discord)
-[![Documentation](https://img.shields.io/badge/Documentation-📕-blue)](https://docs.browser-use.com)
-[![WarmShao](https://img.shields.io/twitter/follow/warmshao?style=social)](https://x.com/warmshao)
+[![n0rizkitty](https://img.shields.io/twitter/follow/n0rizkitty?style=social)](https://x.com/n0rizkitty)
 
+## About Rebrowse
+
+Rebrowse is a powerful tool that allows you to record, automate, and share your AI workflows in one shot. It enables you to convert screen recordings into cross-app workflows, making it easier to document and reproduce complex AI interactions.
+
+Key features of Rebrowse:
+- Record your screen once and automate the workflow forever
+- Transform recordings into shareable workflow agents
+- Support for cross-application workflows
+- Easy sharing and collaboration
+
+
+Follow [me on twitter]((https://x.com/n0rizkitty)) to see the udpate!
+
+---
 This project builds upon the foundation of the [browser-use](https://github.com/browser-use/browser-use), which is designed to make websites accessible for AI agents.
 
 We would like to officially thank [WarmShao](https://github.com/warmshao) for his contribution to this project.
@@ -231,3 +242,75 @@ CHROME_PERSISTENT_SESSION=true docker compose up --build
 - [x] **2025/01/26:** Thanks to @vvincent1234. Now browser-use-webui can combine with DeepSeek-r1 to engage in deep thinking!
 - [x] **2025/01/10:** Thanks to @casistack. Now we have Docker Setup option and also Support keep browser open between tasks.[Video tutorial demo](https://github.com/browser-use/web-ui/issues/1#issuecomment-2582511750).
 - [x] **2025/01/06:** Thanks to @richard-devbot. A New and Well-Designed WebUI is released. [Video tutorial demo](https://github.com/warmshao/browser-use-webui/issues/1#issuecomment-2573393113).
+
+## Setting Up Custom Demo Environment
+
+### Prerequisites
+- Python 3.11 or higher
+- Git
+- Node.js (for frontend development)
+- Docker and Docker Compose (optional, for containerized setup)
+
+### Local Development Setup
+
+1. **Clone the Repository**
+```bash
+git clone https://github.com/your-username/rebrowse.git
+cd rebrowse
+```
+
+2. **Set Up Backend**
+```bash
+# Create and activate virtual environment
+python -m venv venv
+source venv/bin/activate  # On Windows: .\venv\Scripts\activate
+
+# Install dependencies
+pip install -r requirements.txt
+```
+
+3. **Set Up Frontend**
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+4. **Configure Environment Variables**
+Create a `.env` file in the root directory:
+```env
+# API Keys
+OPENAI_API_KEY=your_key_here
+ANTHROPIC_API_KEY=your_key_here
+GOOGLE_API_KEY=your_key_here
+
+# Development Settings
+DEBUG=true
+PORT=3000
+```
+
+5. **Start Development Servers**
+```bash
+# Terminal 1 - Backend
+python app.py
+
+# Terminal 2 - Frontend
+cd frontend
+npm run dev
+```
+
+6. **Access the Application**
+- Frontend: `http://localhost:3000`
+- Backend API: `http://localhost:8000`
+
+### Docker Development Setup
+
+1. **Build and Start Containers**
+```bash
+docker compose -f docker-compose.dev.yml up --build
+```
+
+2. **Access Development Environment**
+- Frontend: `http://localhost:3000`
+- Backend API: `http://localhost:8000`
+- VNC Viewer: `http://localhost:6080/vnc.html`
