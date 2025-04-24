@@ -19,7 +19,9 @@ Key features of Rebrowse:
 - Scenario: Book an Airbnb apartment with given conditions
 - Environment: Chrome logged in with a personal Google account
 
-<video src="./Airbnb-Booking-demo.mov" controls="controls">Your browser does not support playing this video!</video>
+[![Airbnb Booking Demo](https://img.youtube.com/vi/1kQu8oYG-2g/0.jpg)](https://youtu.be/1kQu8oYG-2g)
+
+*Click the thumbnail to watch the demo video*
 
 Follow [me on twitter](https://x.com/n0rizkitty) to see the update!
 
