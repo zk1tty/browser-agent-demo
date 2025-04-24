@@ -14,6 +14,13 @@ Key features of Rebrowse:
 - Support for cross-application workflows
 - Easy sharing and collaboration
 
+## Watch Demo
+
+- Scenario: Book an Airbnb apartment with given conditions
+- Environment: Chrome logged in with a personal Google account
+
+<video src="./Airbnb-Booking-demo.mov" controls="controls">Your browser does not support playing this video!</video>
+
 Follow [me on twitter](https://x.com/n0rizkitty) to see the update!
 
 ---
@@ -62,6 +69,8 @@ These flags are necessary to:
 - Disable automation detection
 
 ---
+### Background
+
 This project builds upon the foundation of the [browser-use](https://github.com/browser-use/browser-use), which is designed to make websites accessible for AI agents.
 
 We would like to officially thank [WarmShao](https://github.com/warmshao) for his contribution to this project.
@@ -73,8 +82,6 @@ We would like to officially thank [WarmShao](https://github.com/warmshao) for hi
 **Custom Browser Support:** You can use your own browser with our tool, eliminating the need to re-login to sites or deal with other authentication challenges. This feature also supports high-definition screen recording.
 
 **Persistent Browser Sessions:** You can choose to keep the browser window open between AI tasks, allowing you to see the complete history and state of AI interactions.
-
-<video src="https://github.com/user-attachments/assets/56bc7080-f2e3-4367-af22-6bf2245ff6cb" controls="controls">Your browser does not support playing this video!</video>
 
 ## Installation Guide
 
