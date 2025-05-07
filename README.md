@@ -37,7 +37,7 @@ Check out our [Roadmap](./roadmap.md).
 ---
 ## Installation Guide
 
-<img src="https://raw.githubusercontent.com/zk1tty/rebrowse-app/main/assets/rebrowse-setting.png" alt="Rebrowse Setting" width="350" style="display: block; margin-left: 0;">
+<img src="https://raw.githubusercontent.com/zk1tty/rebrowse-app/main/assets/rebrowse-setting.png" alt="Rebrowse Setting" width="full" />
 
 ### Prerequisites
 - Python 3.8 or higher
@@ -116,7 +116,7 @@ gradio webui.py --watch src
 ```
 This will automatically reload the browser when you make changes to files in the `src` directory.
 
-### Background
+## Background
 
 This project builds upon the foundation of [browser-use](https://github.com/browser-use/browser-use), which is designed to make websites accessible for AI agents.
 
