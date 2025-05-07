@@ -30,8 +30,8 @@ Follow [me on Twitter](https://x.com/n0rizkitty) to see the updates!
 ## Goal
 
 I will make Rebrowse to "Twitch for AI Creators."   
-Here is [the Roadmap](./roadmap.md).
-<img src="https://raw.githubusercontent.com/zk1tty/browser-agent-demo/main/assets/rebrowse-flywheel.png" alt="Rebrowse Flywheel" width="500">
+Check out our [Roadmap](./roadmap.md).
+<img src="https://raw.githubusercontent.com/zk1tty/browser-agent-demo/main/assets/rebrowse-flywheel.png" alt="Rebrowse Flywheel" width="350" style="display: block; margin-left: 0;">
 
 ---
 ## How to connect Browser Agent to your personal Chrome
