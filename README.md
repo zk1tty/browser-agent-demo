@@ -6,7 +6,7 @@
 
 ## About Rebrowse
 
-Rebrowse is a conversion tool from screen recording to workflow agents.   
+Rebrowse is a powerful tool that converts screen recordings into automated workflow agents.   
 
 Key features of Rebrowse:
 - Record your screen once and automate the workflow forever
@@ -14,34 +14,34 @@ Key features of Rebrowse:
 - Support for cross-application workflows
 - Easy sharing and collaboration
 
-Check out Showcases from [rebrowse.me](https://rebrowse.me)
+Explore our Showcases at [rebrowse.me](https://rebrowse.me)
 
 ## Watch Demo
 
-- Scenario: Book an Airbnb apartment with given conditions
-- Environment: Chrome logged in with a personal Google account
+- Scenario: Book an Airbnb apartment with specific conditions
+- Environment: Chrome browser with a personal Google account
 
 [![Airbnb Booking Demo](https://img.youtube.com/vi/1kQu8oYG-2g/0.jpg)](https://youtu.be/1kQu8oYG-2g)
 
-*Click the thumbnail to watch [on Youtube](https://youtu.be/1kQu8oYG-2g)!*
+*Click the thumbnail to watch [on YouTube](https://youtu.be/1kQu8oYG-2g)!*
 
-Follow [me on Twitter](https://x.com/n0rizkitty) to see the updates!
+Follow [me on Twitter](https://x.com/n0rizkitty) for the latest updates!
 
 ## Goal
 
-I will make Rebrowse to "Twitch for AI Creators."   
+I'm building Rebrowse to become the "Twitch for AI Creators."   
 Check out our [Roadmap](./roadmap.md).   
 
 <img src="https://raw.githubusercontent.com/zk1tty/browser-agent-demo/main/assets/rebrowse-flywheel.png" alt="Rebrowse Flywheel" width="350" style="display: block; margin-left: 0;">
 
 ---
-## How to connect Browser Agent to your personal Chrome
+## How to Connect Browser Agent to Your Personal Chrome
 
 <img src="./assets/BrowserAI-Setting.png" alt="Rebrowse Title" width="full"/>
 
 ### Custom Chrome Configuration
 
-To allow the agent to use your personal Chrome browser, you need to start Chrome with specific flags. Here's how to do it:
+To enable the agent to use your personal Chrome browser, you need to start Chrome with specific flags. Here's how:
 
 1. First, identify your Chrome application path:
    - macOS: `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`
@@ -67,13 +67,13 @@ These flags are necessary to:
 ---
 ### Background
 
-This project builds upon the foundation of the [browser-use](https://github.com/browser-use/browser-use), which is designed to make websites accessible for AI agents.
+This project builds upon the foundation of [browser-use](https://github.com/browser-use/browser-use), which is designed to make websites accessible for AI agents.
 
 We would like to officially thank [WarmShao](https://github.com/warmshao) for his contribution to this project.
 
-**WebUI:** is built on Gradio and supports most of `browser-use` functionalities. This UI is designed to be user-friendly and enables easy interaction with the browser agent.
+**WebUI:** Built on Gradio, supporting most `browser-use` functionalities. This UI is designed to be user-friendly and enables easy interaction with the browser agent.
 
-**Expanded LLM Support:** We've integrated support for various Large Language Models (LLMs), including: Google, OpenAI, Azure OpenAI, Anthropic, DeepSeek, Ollama, etc. And we plan to add support for even more models in the future.
+**Expanded LLM Support:** We've integrated support for various Large Language Models (LLMs), including: Google, OpenAI, Azure OpenAI, Anthropic, DeepSeek, Ollama, etc. We plan to add support for even more models in the future.
 
 **Custom Browser Support:** You can use your own browser with our tool, eliminating the need to re-login to sites or deal with other authentication challenges. This feature also supports high-definition screen recording.
 
