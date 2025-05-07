@@ -27,11 +27,11 @@ Check out Showcases from [rebrowse.me](https://rebrowse.me)
 
 Follow [me on Twitter](https://x.com/n0rizkitty) to see the updates!
 
-## Project roadmap
+## Goal
 
-I wrote the project motivation and roadmap of Rebrowse [here](./roadmap.md).    
-Simply put, browser-use is amazing, but it's far away from real-world use cases.   
-We're filling in the gap between users and library.
+I will make Rebrowse to "Twitch for AI Creators."   
+Here is [the Roadmap](./roadmap.md).
+<img src="https://raw.githubusercontent.com/zk1tty/browser-agent-demo/main/assets/rebrowse-flywheel.png" alt="Rebrowse Flywheel" width="500">
 
 ---
 ## How to connect Browser Agent to your personal Chrome
