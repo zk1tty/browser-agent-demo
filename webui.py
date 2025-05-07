@@ -10,6 +10,16 @@ import asyncio
 import argparse
 import os
 
+# Import task templates
+from task_templates import TASK_TEMPLATES
+
+# TODO: add logging configure
+logging.basicConfig(
+    level=logging.INFO,  # Set default level {logging.DEBUG, logging.INFO, logging.WARNING}
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+
 logger = logging.getLogger(__name__)
 
 import gradio as gr
@@ -48,6 +58,17 @@ _global_agent_state = AgentState()
 # webui config
 webui_config_manager = utils.ConfigManager()
 
+# ✨ NEW – import json and typing for repeat feature
+import json
+from typing import Tuple, List, Dict, Any
+
+def _extract_initial_actions(history_json: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """
+    Turn the *first* model-generated step in the uploaded browsing history into
+    an `initial_actions` list that our Agent understands.
+    """
+    first = history_json['history'][0]
+    return first['model_output']['action']
 
 def scan_and_register_components(blocks):
     """扫描一个 Blocks 对象并注册其中的所有交互式组件，但不包括按钮"""
@@ -539,7 +560,7 @@ async def run_custom_agent(
                 await _global_browser.close()
                 _global_browser = None
 
-
+# main Custom Agent on click
 async def run_with_stream(
         agent_type,
         llm_provider,
@@ -777,6 +798,78 @@ async def run_deep_search(research_task, max_search_iteration_input, max_query_p
     return markdown_content, file_path, gr.update(value="Stop", interactive=True), gr.update(interactive=True)
 
 
+# ✨ NEW – coroutine to replay uploaded browsing history
+async def run_repeat(
+    history_file,
+    max_steps,
+    llm_provider, llm_model_name, ollama_num_ctx,
+    llm_temperature, llm_base_url, llm_api_key,
+    use_own_browser, keep_browser_open, headless, disable_security,
+    window_w, window_h, save_recording_path, save_agent_history_path,
+    save_trace_path, enable_recording, chrome_cdp, use_vision,
+    max_actions_per_step, tool_calling_method, max_input_tokens
+) -> Tuple[str, str]:
+    """
+    1. Parse the JSON.
+    2. Build `initial_actions`.
+    3. Fire up the regular custom Agent, passing `initial_actions`.
+    """
+    try:
+        # If already a dict (parsed JSON from Gradio)
+        if isinstance(history_file, dict):
+            history_json = history_file
+        # If NamedString or UploadFile with .name path
+        elif hasattr(history_file, 'name') and isinstance(history_file.name, str) and os.path.exists(history_file.name):
+            with open(history_file.name, 'r') as f:
+                history_json = json.load(f)
+        # If file-like object supports read()
+        elif hasattr(history_file, 'read') and callable(history_file.read):
+            history_json = json.load(history_file)
+        # If it's a string: try raw JSON, else file path
+        elif isinstance(history_file, str):
+            try:
+                history_json = json.loads(history_file)
+            except json.JSONDecodeError:
+                with open(history_file, 'r') as f:
+                    history_json = json.load(f)
+        else:
+            # Fallback: parse as text
+            history_json = json.loads(str(history_file))
+        initial_actions = _extract_initial_actions(history_json)
+    except Exception as e:
+        return "", f"❌ Failed to parse JSON: {e}"
+
+    # Re-use run_browser_agent under the hood
+    result, errors, *_ = await run_browser_agent(
+        agent_type="custom",
+        llm_provider=llm_provider,
+        llm_model_name=llm_model_name,
+        llm_num_ctx=ollama_num_ctx,
+        llm_temperature=llm_temperature,
+        llm_base_url=llm_base_url,
+        llm_api_key=llm_api_key,
+        use_own_browser=use_own_browser,
+        keep_browser_open=keep_browser_open,
+        headless=headless,
+        disable_security=disable_security,
+        window_w=window_w,
+        window_h=window_h,
+        save_recording_path=save_recording_path,
+        save_agent_history_path=save_agent_history_path,
+        save_trace_path=save_trace_path,
+        enable_recording=enable_recording,
+        task="Repeat uploaded browsing session",
+        add_infos="Running in replay mode.",
+        max_steps=int(max_steps),
+        use_vision=use_vision,
+        max_actions_per_step=max_actions_per_step,
+        tool_calling_method=tool_calling_method,
+        chrome_cdp=chrome_cdp,
+        max_input_tokens=max_input_tokens
+    )
+    return result, errors
+
+
 def create_ui(theme_name="Ocean"):
     css = """
     .gradio-container {
@@ -795,23 +888,30 @@ def create_ui(theme_name="Ocean"):
         padding: 15px;
         border-radius: 10px;
     }
+    /* Add styles for resizable textbox */
+    .resizable-textbox {
+        resize: both !important;
+        min-height: 100px !important;
+        overflow: auto !important;
+    }
     """
 
     with gr.Blocks(
-            title="Browser Use WebUI", theme=theme_map[theme_name], css=css
+            title="🌐🔄 Rebrowse Directory", theme=theme_map[theme_name], css=css
     ) as demo:
         with gr.Row():
             gr.Markdown(
                 """
-                # 🌐 Browser Use WebUI
-                ### Control your browser with AI assistance
+                # 🌐🔄 Rebrowse Directory
+                ### the first directory of cross-app workflows by recording, instead of node editors like Zapier or n8n.
                 """,
                 elem_classes=["header-text"],
             )
 
         with gr.Tabs() as tabs:
-            with gr.TabItem("⚙️ Agent Settings", id=1):
+            with gr.TabItem("⚙️ Settings", id=2):
                 with gr.Group():
+                    gr.Markdown("### Agent Settings")
                     agent_type = gr.Radio(
                         ["org", "custom"],
                         label="Agent Type",
@@ -855,14 +955,14 @@ def create_ui(theme_name="Ocean"):
                             label="Tool Calling Method",
                             value="auto",
                             interactive=True,
-                            allow_custom_value=True,  # Allow users to input custom model names
+                            allow_custom_value=True,
                             choices=["auto", "json_schema", "function_calling"],
-                            info="Tool Calls Funtion Name",
+                            info="Tool Calls Function Name",
                             visible=False
                         )
 
-            with gr.TabItem("🔧 LLM Settings", id=2):
                 with gr.Group():
+                    gr.Markdown("### LLM Settings")
                     llm_provider = gr.Dropdown(
                         choices=[provider for provider, model in utils.model_names.items()],
                         label="LLM Provider",
@@ -875,7 +975,7 @@ def create_ui(theme_name="Ocean"):
                         choices=utils.model_names['openai'],
                         value="gpt-4o",
                         interactive=True,
-                        allow_custom_value=True,  # Allow users to input custom model names
+                        allow_custom_value=True,
                         info="Select a model in the dropdown options or directly type a custom model name"
                     )
                     ollama_num_ctx = gr.Slider(
@@ -910,29 +1010,18 @@ def create_ui(theme_name="Ocean"):
                             info="Your API key (leave blank to use .env)"
                         )
 
-            # Change event to update context length slider
-            def update_llm_num_ctx_visibility(llm_provider):
-                return gr.update(visible=llm_provider == "ollama")
-
-            # Bind the change event of llm_provider to update the visibility of context length slider
-            llm_provider.change(
-                fn=update_llm_num_ctx_visibility,
-                inputs=llm_provider,
-                outputs=ollama_num_ctx
-            )
-
-            with gr.TabItem("🌐 Browser Settings", id=3):
                 with gr.Group():
+                    gr.Markdown("### Browser Settings")
                     with gr.Row():
                         use_own_browser = gr.Checkbox(
                             label="Use Own Browser",
-                            value=False,
+                            value=True,
                             info="Use your existing browser instance",
                             interactive=True
                         )
                         keep_browser_open = gr.Checkbox(
                             label="Keep Browser Open",
-                            value=False,
+                            value=True,
                             info="Keep Browser Open between Tasks",
                             interactive=True
                         )
@@ -974,7 +1063,7 @@ def create_ui(theme_name="Ocean"):
                         placeholder="http://localhost:9222",
                         value="",
                         info="CDP for google remote debugging",
-                        interactive=True,  # Allow editing only if recording is enabled
+                        interactive=True,
                     )
 
                     save_recording_path = gr.Textbox(
@@ -982,7 +1071,7 @@ def create_ui(theme_name="Ocean"):
                         placeholder="e.g. ./tmp/record_videos",
                         value="./tmp/record_videos",
                         info="Path to save browser recordings",
-                        interactive=True,  # Allow editing only if recording is enabled
+                        interactive=True,
                     )
 
                     save_trace_path = gr.Textbox(
@@ -1001,15 +1090,39 @@ def create_ui(theme_name="Ocean"):
                         interactive=True,
                     )
 
-            with gr.TabItem("🤖 Run Agent", id=4):
+            with gr.TabItem("🤖 Choose Agent", id=1):
+                with gr.Row():
+                    with gr.Column():
+                        gr.Markdown("### Preset Tasks")
+                        with gr.Row():
+                            post_to_x = gr.Button("➡️ Post Grok-gen AI news on X", variant="secondary")
+                            heygen_video_button = gr.Button("🎥 Generate Video with HeyGen", variant="secondary")
+                            custom_task = gr.Button("Custom Task", variant="secondary")
+
                 task = gr.Textbox(
                     label="Task Description",
-                    lines=4,
+                    lines=8,
                     placeholder="Enter your task here...",
-                    value="go to google.com and type 'OpenAI' click search and give me the first url",
+                    value="go to 'X.com', then:\n1. Wait 2 seconds after the page loads\n2. Click the 'Post' button\n3. Wait 1 second after the post dialog opens\n4. In the text input field, type the text VERY SLOWLY and CAREFULLY:\n   '  hello world, I'm https://rebrowse.me  '\n5. After typing, verify EACH CHARACTER:\n   - Starts with 'h'\n   - Ends with 'e' \n6. If ANY character is wrong, clear the field completely and type again\n7. Only click 'Post' when you've verified every character is correct\n8. If you see a rate limit error, wait 30 seconds before retrying",
                     info="Describe what you want the agent to do",
-                    interactive=True
+                    interactive=True,
+                    elem_classes=["resizable-textbox"]
                 )
+
+                # Define preset task templates
+                def set_post_to_x():
+                    return TASK_TEMPLATES["post_to_x"]
+
+                def set_heygen_video():
+                    return TASK_TEMPLATES["heygen_video"]
+
+                def set_custom_task():
+                    return TASK_TEMPLATES["custom_task"]
+
+                # Bind the preset task buttons
+                post_to_x.click(fn=set_post_to_x, outputs=task)
+                custom_task.click(fn=set_custom_task, outputs=task)
+
                 add_infos = gr.Textbox(
                     label="Additional Information",
                     lines=3,
@@ -1053,7 +1166,7 @@ def create_ui(theme_name="Ocean"):
                 trace_file = gr.File(label="Trace File")
                 agent_history_file = gr.File(label="Agent History")
 
-            with gr.TabItem("🧐 Deep Research", id=5):
+            with gr.TabItem("🧐 Deep Research", id=3, visible=False):
                 research_task_input = gr.Textbox(label="Research Task", lines=5,
                                                  value="Compose a report on the use of Reinforcement Learning for training Large Language Models, encompassing its origins, current advancements, and future prospects, substantiated with examples of relevant models and techniques. The report should reflect original insights and analysis, moving beyond mere summarization of existing literature.",
                                                  interactive=True)
@@ -1117,7 +1230,8 @@ def create_ui(theme_name="Ocean"):
                 outputs=[stop_research_button, research_button],
             )
 
-            with gr.TabItem("🎥 Recordings", id=7, visible=True):
+            # temporarly invisible
+            with gr.TabItem("🎥 Recordings", id=7, visible=False):
                 def list_recordings(save_recording_path):
                     if not os.path.exists(save_recording_path):
                         return []
@@ -1151,7 +1265,7 @@ def create_ui(theme_name="Ocean"):
                     outputs=recordings_gallery
                 )
 
-            with gr.TabItem("📁 UI Configuration", id=8):
+            with gr.TabItem("📁 UI Configuration", id=8, visible=False):
                 config_file_input = gr.File(
                     label="Load UI Settings from Config File",
                     file_types=[".json"],
@@ -1170,6 +1284,44 @@ def create_ui(theme_name="Ocean"):
                     fn=save_current_config,
                     inputs=[],  # 不需要输入参数
                     outputs=[config_status]
+                )
+
+            # ✨ NEW – Repeat tab for uploading & replaying history
+            with gr.TabItem("🔁 Rebrowse", id=9):
+                history_file_input = gr.File(
+                    label="Browsing History (JSON)",
+                    file_types=[".json"],
+                    interactive=True
+                )
+                repeat_max_steps = gr.Number(
+                    label="Max Steps to Replay",
+                    value=50,
+                    precision=0,
+                    interactive=True
+                )
+                run_repeat_btn = gr.Button("▶️ Run Repeat", variant="primary", scale=2)
+                stop_repeat_btn = gr.Button("⏹ Stop", variant="stop", scale=1)
+
+                repeat_result = gr.Textbox(label="Result / Log", lines=4)
+                repeat_errors = gr.Textbox(label="Errors", lines=4)
+
+                run_repeat_btn.click(
+                    fn=run_repeat,
+                    inputs=[
+                        history_file_input, repeat_max_steps,
+                        llm_provider, llm_model_name, ollama_num_ctx,
+                        llm_temperature, llm_base_url, llm_api_key,
+                        use_own_browser, keep_browser_open, headless, disable_security,
+                        window_w, window_h, save_recording_path, save_agent_history_path,
+                        save_trace_path, enable_recording, chrome_cdp, use_vision,
+                        max_actions_per_step, tool_calling_method, max_input_tokens
+                    ],
+                    outputs=[repeat_result, repeat_errors]
+                )
+                stop_repeat_btn.click(
+                    fn=stop_agent,
+                    inputs=[],
+                    outputs=[stop_repeat_btn, run_repeat_btn]
                 )
 
         # Attach the callback to the LLM provider dropdown
@@ -1200,17 +1352,10 @@ def create_ui(theme_name="Ocean"):
         )
     return demo
 
+# Build once; let the `gradio` CLI launch & reload
+demo = create_ui(theme_name="Ocean")   # gradio looks for "demo"
+app  = demo                            # optional alias, harmless
 
-def main():
-    parser = argparse.ArgumentParser(description="Gradio UI for Browser Agent")
-    parser.add_argument("--ip", type=str, default="127.0.0.1", help="IP address to bind to")
-    parser.add_argument("--port", type=int, default=7788, help="Port to listen on")
-    parser.add_argument("--theme", type=str, default="Ocean", choices=theme_map.keys(), help="Theme to use for the UI")
-    args = parser.parse_args()
-
-    demo = create_ui(theme_name=args.theme)
-    demo.launch(server_name=args.ip, server_port=args.port)
-
-
-if __name__ == '__main__':
-    main()
+# --- allow plain `python webui.py` ----------------------------------
+if __name__ == "__main__":              # executed only when you run: python webui.py
+    demo.launch(server_name="127.0.0.1", server_port=7860, debug=True)

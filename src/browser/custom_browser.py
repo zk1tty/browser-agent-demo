@@ -42,9 +42,11 @@ class CustomBrowser(Browser):
                 if not hasattr(self.config, 'extra_chromium_args'):
                     self.config.extra_chromium_args = []
                 chrome_flags = [
+                    "--disable-features=NewTabPage",  # Prevent loading New Tab Page in non-browser-tab context
                     "--profile-directory=Default",
                     "--no-first-run",
                     "--no-default-browser-check",
+                    "--user-data-dir=${HOME}/Library/Application Support/Google/Chrome",  # Use default Chrome profile
                     "--disable-features=IsolateOrigins,site-per-process",
                     "--disable-web-security",
                     "--disable-site-isolation-trials",
@@ -58,10 +60,7 @@ class CustomBrowser(Browser):
                     "--disable-software-rasterizer",
                     "--disable-features=BlockInsecurePrivateNetworkRequests",
                     "--disable-features=CrossSiteDocumentBlockingIfIsolating",
-                    "--disable-features=CrossSiteDocumentBlockingAlways",
-                    "--disable-features=CrossSiteDocumentBlockingIfIsolating",
-                    "--disable-features=CrossSiteDocumentBlockingAlways",
-                    "--disable-features=IsolateOrigins,site-per-process,LavaMoat" #Sorry Aaron.
+                    "--disable-features=CrossSiteDocumentBlockingAlways"
                 ]
                 self.config.extra_chromium_args.extend(chrome_flags)
                 logger.info(f"Added Chrome-specific flags: {chrome_flags}")
