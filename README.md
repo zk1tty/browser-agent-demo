@@ -1,4 +1,4 @@
-[<img src="./assets/Rebrowse-title.png" alt="Rebrowse Title" width="full"/>](https://rebrowse.me)
+[<img src="https://raw.githubusercontent.com/zk1tty/browser-agent-demo/main/assets/rebrowse-title.png" alt="Rebrowse Title" width="full"/>](https://rebrowse.me)
 
 <br/>
 
