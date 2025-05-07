@@ -12,7 +12,7 @@ I will make Rebrowse "Twitch for AI Creators."
 
 A marketplace for AI creators to share their combinations of AI tools. That generates the following flywheel:
 
-- AI Creators can earn profile by sharing AI workflows.   
+- AI Creators can generate income by sharing AI workflows.   
 - Users can execute their workflow by one-click.
 - AI tool companies find high-quality AI creators and delegate them community building.
 
