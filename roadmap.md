@@ -1,12 +1,24 @@
 # Roadmap
 
-## Motivation
+## Motivation ❤️‍🔥
 
-Browser-use is an amazing library to leverage the capavility of LLM to contorl browser.   
-However, applying LLM Agent to real-world browing tasks, I found that so many missing pieces should be filled in.   
-At Rebrowse, we will conenct the gap of powerful library and real-workd use cases where anyone, like your grandma, can use it out of the box very intuitively.    
+Browser-use is an amazing library to leverage the capability of LLM to control browser.   
+However, applying LLM Agent to real-world browsing tasks, I found that so many missing pieces should be filled in.   
+At Rebrowse, we will connect the gap between powerful library and real-world use cases where anyone, like your grandma, can use it out of the box very intuitively.    
 
-## Key insights from users
+## End Game 🎯
+
+I will make Rebrowse "Twitch for AI Creators."   
+
+A marketplace for AI creators to share their combinations of AI tools. That generates the following flywheel:
+
+- AI Creators can earn profile by sharing AI workflows.   
+- Users can execute their workflow by one-click.
+- AI tool companies find high-quality AI creators and delegate them community building.
+
+<img src="https://raw.githubusercontent.com/zk1tty/browser-agent-demo/main/assets/rebrowse-flywheel.png" alt="Rebrowse Flywheel" width="500">
+
+## Key insights from users ✍🏻
 
 My key insights are below:
 
@@ -15,9 +27,9 @@ My key insights are below:
 - Identifying workflows is not easy for customers.   
    - target businesses first.
 - Business people have better ideas.
-  - They deligate cheap freelancers to operate the specific tasks, and ask them reports.
+  - They delegate cheap freelancers to operate the specific tasks, and ask them for reports.
 
-## Target workflow
+## Target workflow 🌹
 
 - Social media content creation
   - include text, image and video generation
@@ -27,17 +39,15 @@ My key insights are below:
 - Cold reach out with personalized content generation by web scraping
   - on spreadsheet
 
-
-## Feature lists
+## Feature lists ⚙️
 
 - [ ] download media file(e.g. png, mp4)
 - [ ] upload media file(e.g. png, mp4)
-- [ ] Copy and Paste i/o Cripboard
-- [ ] R/W access to memoery
+- [ ] Copy and Paste i/o Clipboard
+- [ ] R/W access to memory
 - [ ] Multi-thread execution of one task cycle
 
-
-## What I've done so far
+## What I've done so far 🦾
 - [x] log-in with my google account to chatgpt.com, airbnb.com, LinkedIn, etc.  
 - [x] log-in with my google account to krea.ai   
 - [x] find a best practice for isolated chrome browser credential management to address security concerns.   

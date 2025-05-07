@@ -6,7 +6,7 @@
 
 ## About Rebrowse
 
-Rebrowse is a convertoin tool from screen recording to workflow agents.   
+Rebrowse is a conversion tool from screen recording to workflow agents.   
 
 Key features of Rebrowse:
 - Record your screen once and automate the workflow forever
@@ -25,14 +25,13 @@ Check out Showcases from [rebrowse.me](https://rebrowse.me)
 
 *Click the thumbnail to watch [on Youtube](https://youtu.be/1kQu8oYG-2g)!*
 
-Follow [me on twitter](https://x.com/n0rizkitty) to see the update!
-
+Follow [me on Twitter](https://x.com/n0rizkitty) to see the updates!
 
 ## Project roadmap
 
 I wrote the project motivation and roadmap of Rebrowse [here](./roadmap.md).    
-Simply say, browser-use is amazing, but it's far away from the real world use cases.   
-We're filling in the gap of users and library.
+Simply put, browser-use is amazing, but it's far away from real-world use cases.   
+We're filling in the gap between users and library.
 
 ---
 ## How to connect Browser Agent to your personal Chrome
@@ -73,7 +72,7 @@ We would like to officially thank [WarmShao](https://github.com/warmshao) for hi
 
 **WebUI:** is built on Gradio and supports most of `browser-use` functionalities. This UI is designed to be user-friendly and enables easy interaction with the browser agent.
 
-**Expanded LLM Support:** We've integrated support for various Large Language Models (LLMs), including: Google, OpenAI, Azure OpenAI, Anthropic, DeepSeek, Ollama etc. And we plan to add support for even more models in the future.
+**Expanded LLM Support:** We've integrated support for various Large Language Models (LLMs), including: Google, OpenAI, Azure OpenAI, Anthropic, DeepSeek, Ollama, etc. And we plan to add support for even more models in the future.
 
 **Custom Browser Support:** You can use your own browser with our tool, eliminating the need to re-login to sites or deal with other authentication challenges. This feature also supports high-definition screen recording.
 
@@ -180,7 +179,6 @@ docker compose up --build
 # Or run with persistent browser (browser stays open between AI tasks)
 CHROME_PERSISTENT_SESSION=true docker compose up --build
 ```
-
 
 4. Access the Application:
 - Web Interface: Open `http://localhost:7788` in your browser
