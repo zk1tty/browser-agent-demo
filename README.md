@@ -1,4 +1,4 @@
-[<img src="https://raw.githubusercontent.com/zk1tty/browser-agent-demo/main/assets/rebrowse-title.png" alt="Rebrowse Title" width="full"/>](https://rebrowse.me)
+[<img src="https://raw.githubusercontent.com/zk1tty/rebrowse-app/main/assets/rebrowse-title.png" alt="Rebrowse Title" width="full"/>](https://rebrowse.me)
 
 <br/>
 
@@ -32,12 +32,12 @@ Follow [me on Twitter](https://x.com/n0rizkitty) for the latest updates!
 We're gonna build a marketplace, where users can share cross-app workflows by recording, instead of node editors like Zapier or n8n.      
 Check out our [Roadmap](./roadmap.md).   
 
-<img src="https://raw.githubusercontent.com/zk1tty/browser-agent-demo/main/assets/rebrowse-flywheel.png" alt="Rebrowse Flywheel" width="350" style="display: block; margin-left: 0;">
+<img src="https://raw.githubusercontent.com/zk1tty/rebrowse-app/main/assets/rebrowse-flywheel.png" alt="Rebrowse Flywheel" width="350" style="display: block; margin-left: 0;">
 
 ---
 ## Installation Guide
 
-<img src="https://raw.githubusercontent.com/zk1tty/browser-agent-demo/main/assets/rebrowse-setting.png" alt="Rebrowse Setting" width="full" style="display: block; margin-left: 0;">
+<img src="https://raw.githubusercontent.com/zk1tty/rebrowse-app/main/assets/rebrowse-setting.png" alt="Rebrowse Setting" width="350" style="display: block; margin-left: 0;">
 
 ### Prerequisites
 - Python 3.8 or higher
@@ -47,8 +47,8 @@ Check out our [Roadmap](./roadmap.md).
 
 ### Step 1: Clone the Repository
 ```bash
-git clone https://github.com/yourusername/rebrowse-directory.git
-cd rebrowse-directory
+git clone https://github.com/zk1tty/rebrowse-app.git
+cd rebrowse-app
 ```
 
 ### Step 2: Set Up Python Environment
