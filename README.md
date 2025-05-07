@@ -37,7 +37,7 @@ Check out our [Roadmap](./roadmap.md).
 ---
 ## Installation Guide
 
-<img src="https://raw.githubusercontent.com/zk1tty/browser-agent-demo/main/assets/rebrowse-setting.png" alt="Rebrowse Setting" width="350" style="display: block; margin-left: 0;">
+<img src="https://raw.githubusercontent.com/zk1tty/browser-agent-demo/main/assets/rebrowse-setting.png" alt="Rebrowse Setting" width="full" style="display: block; margin-left: 0;">
 
 ### Prerequisites
 - Python 3.8 or higher
