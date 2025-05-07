@@ -6,7 +6,7 @@ Browser-use is an amazing library to leverage the capavility of LLM to contorl b
 However, applying LLM Agent to real-world browing tasks, I found that so many missing pieces should be filled in.   
 At Rebrowse, we will conenct the gap of powerful library and real-workd use cases where anyone, like your grandma, can use it out of the box very intuitively.    
 
-## Direction
+## Key insights from users
 
 My key insights are below:
 

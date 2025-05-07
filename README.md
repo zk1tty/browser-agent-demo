@@ -1,4 +1,4 @@
-<img src="./assets/rebrowse-title.png" alt="Rebrowse Title" width="full"/>
+[<img src="./assets/Rebrowse-title.png" alt="Rebrowse Title" width="full"/>](https://rebrowse.me)
 
 <br/>
 
@@ -6,13 +6,15 @@
 
 ## About Rebrowse
 
-Rebrowse is a powerful tool that allows you to record, automate, and share your AI workflows in one shot. It enables you to convert screen recordings into cross-app workflows, making it easier to document and reproduce complex AI interactions.
+Rebrowse is a convertoin tool from screen recording to workflow agents.   
 
 Key features of Rebrowse:
 - Record your screen once and automate the workflow forever
 - Transform recordings into shareable workflow agents
 - Support for cross-application workflows
 - Easy sharing and collaboration
+
+Check out Showcases from [rebrowse.me](https://rebrowse.me)
 
 ## Watch Demo
 
@@ -21,9 +23,16 @@ Key features of Rebrowse:
 
 [![Airbnb Booking Demo](https://img.youtube.com/vi/1kQu8oYG-2g/0.jpg)](https://youtu.be/1kQu8oYG-2g)
 
-*Click the thumbnail to watch the demo video*
+*Click the thumbnail to watch [on Youtube](https://youtu.be/1kQu8oYG-2g)!*
 
 Follow [me on twitter](https://x.com/n0rizkitty) to see the update!
+
+
+## Project roadmap
+
+I wrote the project motivation and roadmap of Rebrowse [here](./roadmap.md).    
+Simply say, browser-use is amazing, but it's far away from the real world use cases.   
+We're filling in the gap of users and library.
 
 ---
 ## How to connect Browser Agent to your personal Chrome
@@ -42,33 +51,18 @@ To allow the agent to use your personal Chrome browser, you need to start Chrome
 2. Execute Chrome with the following flags:
 ```bash
 # macOS example
-/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome \
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
 --remote-debugging-port=9222 \
---profile-directory=Default \
+--user-data-dir="/Users/{username}/Library/Application Support/Google/Chrome" \
+--profile-directory="Default" \
 --no-first-run \
---no-default-browser-check \
---disable-features=IsolateOrigins,site-per-process \
---disable-web-security \
---disable-site-isolation-trials \
---disable-blink-features=AutomationControlled \
---disable-features=IsolateOrigins,site-per-process,LavaMoat \
---disable-extensions \
---disable-gpu \
---no-sandbox \
---disable-setuid-sandbox \
---disable-dev-shm-usage \
---disable-software-rasterizer \
---disable-features=BlockInsecurePrivateNetworkRequests \
---disable-features=CrossSiteDocumentBlockingIfIsolating \
---disable-features=CrossSiteDocumentBlockingAlways
+--no-default-browser-check
 ```
 
 These flags are necessary to:
-- Enable remote debugging
-- Disable security features that might interfere with automation
-- Disable sandboxing and other restrictions
-- Allow cross-origin requests
-- Disable automation detection
+- Enable remote debugging via Chrome CDP
+- Use your personal Chrome profile
+- Skip first-run and default browser checks
 
 ---
 ### Background
