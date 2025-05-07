@@ -12,7 +12,7 @@ Key features of Rebrowse:
 - Record your screen once and automate the workflow forever
 - Transform recordings into shareable workflow agents
 - Support for cross-application workflows
-- Easy sharing and collaboration
+- Easy sharing and collaboration   
 
 Explore our Showcases at [rebrowse.me](https://rebrowse.me)
 
@@ -27,9 +27,9 @@ Explore our Showcases at [rebrowse.me](https://rebrowse.me)
 
 Follow [me on Twitter](https://x.com/n0rizkitty) for the latest updates!
 
-## Goal
+## Roadmap
 
-I'm building Rebrowse to become the "Twitch for AI Creators."   
+We're gonna build a marketplace, where users can share cross-app workflows by recording, instead of node editors like Zapier or n8n.      
 Check out our [Roadmap](./roadmap.md).   
 
 <img src="https://raw.githubusercontent.com/zk1tty/browser-agent-demo/main/assets/rebrowse-flywheel.png" alt="Rebrowse Flywheel" width="350" style="display: block; margin-left: 0;">
