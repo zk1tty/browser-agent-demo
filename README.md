@@ -30,7 +30,7 @@ Follow [me on Twitter](https://x.com/n0rizkitty) for the latest updates!
 ## Roadmap
 
 We're gonna build a marketplace, where users can share cross-app workflows by recording, instead of node editors like Zapier or n8n.      
-Check out our [Roadmap](./roadmap.md).   
+Check out our [Roadmap](./ROADMAP.md).   
 
 <img src="https://raw.githubusercontent.com/zk1tty/rebrowse-app/main/assets/rebrowse-flywheel.png" alt="Rebrowse Flywheel" width="350" style="display: block; margin-left: 0;">
 
