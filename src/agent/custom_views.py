@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import Any, Dict, List, Literal, Optional, Type
 import uuid
+from datetime import datetime
 
 from browser_use.agent.views import AgentOutput, AgentState, ActionResult, AgentHistoryList, MessageManagerState
 from browser_use.controller.registry.views import ActionModel
@@ -52,7 +53,7 @@ class CustomAgentOutput(AgentOutput):
 
 
 class CustomAgentState(BaseModel):
-    agent_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    agent_id: str = Field(default_factory=lambda: datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
     n_steps: int = 1
     consecutive_failures: int = 0
     last_result: Optional[List['ActionResult']] = None
