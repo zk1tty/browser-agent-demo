@@ -70,15 +70,19 @@ To enable the agent to use your personal Chrome browser, you need to start Chrom
    - Linux: `/usr/bin/google-chrome`
 
 2. Execute Chrome with the following flags:
-```bash
-# macOS example
-"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
---remote-debugging-port=9222 \
---user-data-dir="/Users/{username}/Library/Application Support/Google/Chrome" \
---profile-directory="Default" \
---no-first-run \
---no-default-browser-check
-```
+
+    > Note: replace {username} with your OS username for "--user-data-dir" flag.
+
+    ```bash
+    # macOS example
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+    --remote-debugging-port=9222 \
+    # TODO: replace {username} with your OS username
+    --user-data-dir="/Users/{username}/Library/Application Support/Google/Chrome" \
+    --profile-directory="Default" \
+    --no-first-run \
+    --no-default-browser-check
+    ```
 
 These flags are necessary to:
 - Enable remote debugging via Chrome CDP
@@ -86,17 +90,21 @@ These flags are necessary to:
 - Skip first-run and default browser checks
 
 ### Step 4: Configure Environment Variables
-Create a `.env` file in the project root:
-```bash
-# LLM API Keys
-OPENAI_API_KEY=your_openai_api_key
-ANTHROPIC_API_KEY=your_anthropic_api_key
+1. Copy `.env.examlpe` file to `.env` file in the project root.
 
-# Browser Settings (Optional)
-CHROME_CDP=http://localhost:9222
-CHROME_PATH=/path/to/chrome
-CHROME_USER_DATA=/path/to/chrome/user/data
-```
+2. Add API key, and update chrome path
+    ```bash
+    # LLM API Keys
+    OPENAI_API_KEY=your_openai_api_key
+    ```
+
+    ```bash
+    # Chrome Configuration
+    ## TODO: replace {username} with your OS username
+    CHROME_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+    CHROME_USER_DATA="/Users/username/Library/Application Support/Google/Chrome"
+    CHROME_CDP="http://localhost:9222"
+    ```
 
 ### Step 5: Launch the Application
 ```bash
@@ -109,7 +117,7 @@ python webui.py
 
 The application will be available at `http://127.0.0.1:7860`
 
-### Development Mode
+### Development Mode of gradio
 For development with auto-reload:
 ```bash
 gradio webui.py --watch src
