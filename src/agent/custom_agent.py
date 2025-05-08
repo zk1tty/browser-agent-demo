@@ -160,6 +160,7 @@ class CustomAgent(Agent):
             state=self.state.message_manager_state,
         )
 
+    ## TODO: Eval the response from LLM
     def _log_response(self, response: CustomAgentOutput) -> None:
         """Log the model's response"""
         if "Success" in response.current_state.evaluation_previous_goal:
@@ -205,10 +206,36 @@ class CustomAgent(Agent):
 
         logger.info(f"🧠 All Memory: \n{step_info.memory}")
 
+    # hint: get next action from LLM by calling llm.invoke in utils/llm.py
     @time_execution_async("--get_next_action")
     async def get_next_action(self, input_messages: list[BaseMessage]) -> AgentOutput:
         """Get next action from LLM based on current state"""
         fixed_input_messages = self._convert_input_messages(input_messages)
+        
+        # Added: Convert messages to serializable format
+        cleaned_messages = []
+        for msg in fixed_input_messages:
+            if isinstance(msg, dict):
+                # Create a copy of the message without image_url
+                cleaned_msg = {k: v for k, v in msg.items() if k != 'image_url'}
+                cleaned_messages.append(cleaned_msg)
+            elif hasattr(msg, 'type') and hasattr(msg, 'content'):
+                # Handle LangChain message objects
+                cleaned_msg = {
+                    'type': msg.type,
+                    'content': msg.content if not isinstance(msg.content, list) else [
+                        {k: v for k, v in item.items() if k != 'image_url'}
+                        for item in msg.content
+                    ]
+                }
+                cleaned_messages.append(cleaned_msg)
+            else:
+                # Handle other types
+                cleaned_messages.append(str(msg))
+        
+        logger.debug(f"fixed_input_messages: {json.dumps(cleaned_messages, indent=2)}")
+
+        # TODO: This is where the LLM is called
         ai_message = self.llm.invoke(fixed_input_messages)
         self.message_manager._add_message_with_tokens(ai_message)
 
@@ -226,11 +253,51 @@ class CustomAgent(Agent):
             ai_content = ai_content.replace("```json", "").replace("```", "")
             ai_content = repair_json(ai_content)
             parsed_json = json.loads(ai_content)
+            
+            # Debug log the parsed JSON
+            logger.debug(f"===Parsed JSON bf mod===: {json.dumps(parsed_json, indent=2)}")
+            
+            # Ensure parsed_json is a dictionary
+            if not isinstance(parsed_json, dict):
+                raise ValueError(f"Expected dictionary but got {type(parsed_json)}")
+            
+            # Handle switch_tab action by ensuring page_id is present
+            if 'action' in parsed_json and isinstance(parsed_json['action'], list):
+                for action in parsed_json['action']:
+                    if action.get('type') == 'switch_tab':
+                        # Handle both 'index' and 'tab_index' cases
+                        tab_index = action.get('tab_index') or action.get('index')
+                        if tab_index is not None:
+                            # Get current browser state
+                            state = await self.browser_context.get_state()
+                            if state and hasattr(state, 'pages') and len(state.pages) > tab_index:
+                                # Get the page_id from the browser state
+                                action['page_id'] = state.pages[tab_index].page_id
+                                # Ensure tab_index is used consistently
+                                action['tab_index'] = tab_index
+                                if 'index' in action:
+                                    del action['index']
+                            else:
+                                raise ValueError(f"Invalid tab_index/index: {tab_index}")
+                        else:
+                            raise ValueError("Missing tab_index or index in switch_tab action")
+            
+            # Debug log the modified JSON
+            logger.debug(f"===Parsed JSON af mod===:: {json.dumps(parsed_json, indent=2)}")
+            
+            # Ensure current_state is present and properly structured
+            if 'current_state' not in parsed_json:
+                raise ValueError("Missing 'current_state' in response")
+            
+            if not isinstance(parsed_json['current_state'], dict):
+                raise ValueError(f"Expected dictionary for current_state but got {type(parsed_json['current_state'])}")
+            
+            # Create the CustomAgentOutput instance
             parsed: AgentOutput = self.AgentOutput(**parsed_json)
         except Exception as e:
             import traceback
             traceback.print_exc()
-            logger.debug(ai_message.content)
+            logger.debug(f"Error parsing response. Content: {ai_message.content}")
             raise ValueError('Could not parse response.')
 
         if parsed is None:
@@ -273,6 +340,8 @@ class CustomAgent(Agent):
         # Get planner output
         response = await self.settings.planner_llm.ainvoke(planner_messages)
         plan = str(response.content)
+        # console log plan
+        print(f"plan: {plan}")
         last_state_message = self.message_manager.get_messages()[-1]
         if isinstance(last_state_message, HumanMessage):
             # remove image from last state message
@@ -299,6 +368,80 @@ class CustomAgent(Agent):
             logger.info(f'📋 Plans: {plan}')
         return plan
 
+    def _summarize_browsing_history(self, max_steps: int = 5, max_chars: int = 1500) -> str:
+        if not self.state.history or not self.state.history.history:
+            return "No browsing history yet."
+
+        summary_lines = []
+        char_count = 0
+
+        # Iterate backwards through history (most recent first)
+        for history_item in reversed(self.state.history.history):
+            if len(summary_lines) >= max_steps:
+                break
+
+            step_num = history_item.metadata.step_number
+            url = history_item.state.url
+            # Get title from state or first tab
+            title = getattr(history_item.state, 'title', '')
+            if hasattr(history_item.state, 'tabs') and history_item.state.tabs:
+                first_tab = history_item.state.tabs[0]
+                tab_title = getattr(first_tab, 'title', '')
+                if tab_title:
+                    title = tab_title
+
+            actions_summary = []
+            errors_summary = []
+
+            if history_item.result:
+                for res in history_item.result:
+                    # Use model_output action description if available and parsed
+                    if history_item.model_output and history_item.model_output.action:
+                         # Simplistic representation, might need more detail
+                        action_type = getattr(history_item.model_output.action, 'action_type', 'unknown')
+                        action_args = getattr(history_item.model_output.action, 'args', {})
+                        action_desc = f"{action_type}({action_args})"
+                        actions_summary.append(action_desc[:100]) # Truncate
+                    # Fallback or augment with extracted content if no model_output action
+                    elif res.extracted_content and not res.error:
+                        action_desc = res.extracted_content.split('\\n')[0] # Take first line
+                        actions_summary.append(action_desc[:100]) # Truncate
+
+                    if res.error:
+                        # Summarize error - Get the most specific part of the error
+                        error_lines = res.error.strip().split('\\n')
+                        error_line = error_lines[-1] if error_lines else "Unknown Error"
+                        errors_summary.append(f"Error: ...{error_line[-150:]}") # Truncate
+
+            # Deduplicate action summaries if they come from both model_output and extracted_content
+            actions_summary = list(dict.fromkeys(actions_summary))
+
+            line = f"Step {step_num}: URL: {url}"
+            if title:
+                 line += f" (Title: {title[:50]}...)" # Truncate title
+            if actions_summary:
+                line += f" | Actions: {'; '.join(actions_summary)}"
+            if errors_summary:
+                line += f" | Results: {'; '.join(errors_summary)}"
+            elif history_item.result: # Check if there were results at all
+                 line += " | Results: OK" # Assume OK if results exist but no errors were logged
+
+            line += "\\n"
+
+            if char_count + len(line) > max_chars and summary_lines:
+                 # Stop if adding this line exceeds char limit (and we already have some lines)
+                 summary_lines.append("... (history truncated due to length)\\n")
+                 break
+
+            summary_lines.append(line)
+            char_count += len(line)
+
+        if not summary_lines:
+            return "No recent history processed."
+
+        # Reverse back to chronological order and join
+        return "Browsing History (Recent Steps):\\n" + "".join(reversed(summary_lines))
+
     @time_execution_async("--step")
     async def step(self, step_info: Optional[CustomAgentStepInfo] = None) -> None:
         """Execute one step of the task"""
@@ -313,8 +456,18 @@ class CustomAgent(Agent):
             state = await self.browser_context.get_state()
             await self._raise_if_stopped_or_paused()
 
-            self.message_manager.add_state_message(state, self.state.last_action, self.state.last_result, step_info,
-                                                   self.settings.use_vision)
+            # Generate history summary before adding state message
+            history_summary_str = self._summarize_browsing_history(max_steps=5, max_chars=1500)
+
+            # Pass the summary to add_state_message
+            self.message_manager.add_state_message(
+                state,
+                self.state.last_action,
+                self.state.last_result,
+                step_info,
+                self.settings.use_vision,
+                history_summary=history_summary_str # Pass the summary
+            )
 
             # Run planner at specified intervals if planner is configured
             if self.settings.planner_llm and self.state.n_steps % self.settings.planner_interval == 0:
