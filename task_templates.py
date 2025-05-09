@@ -9,10 +9,8 @@ TASK_TEMPLATES = {
 2. Click the 'Post' button
 3. Wait 1 second after the post dialog opens
 4. In the text input field, type the text VERY SLOWLY and CAREFULLY:
-   '  hello world, I'm https://rebrowse.me  '
+   '  hello world, I'm https://rebrowse.me testing...'
 5. After typing, verify EACH CHARACTER:
-   - Starts with 'h'
-   - Ends with 'e'
    - Has 'https://' not 'http://'
    - Has 'rebrowse.me' not 'rebrowse.m'
 6. If ANY character is wrong, clear the field completely and type again

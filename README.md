@@ -52,42 +52,16 @@ cd rebrowse-app
 ```
 
 ### Step 2: Set Up Python Environment
+
 ```bash
 # Create and activate a virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows, use: venv\Scripts\activate
+uv venv --python 3.11
+source .venv/bin/activate  
+# On Windows, use: venv\Scripts\activate
 
 # Install dependencies
-pip install -r requirements.txt
+uv pip install -r requirements.txt
 ```
-
-### Step 3: Configure Chrome Browser
-To enable the agent to use your personal Chrome browser, you need to start Chrome with specific flags:
-
-1. First, identify your Chrome application path:
-   - macOS: `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`
-   - Windows: `C:\Program Files\Google\Chrome\Application\chrome.exe`
-   - Linux: `/usr/bin/google-chrome`
-
-2. Execute Chrome with the following flags:
-
-    > Note: replace {username} with your OS username for "--user-data-dir" flag.
-
-    ```bash
-    # macOS example
-    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-    --remote-debugging-port=9222 \
-    # TODO: replace {username} with your OS username
-    --user-data-dir="/Users/{username}/Library/Application Support/Google/Chrome" \
-    --profile-directory="Default" \
-    --no-first-run \
-    --no-default-browser-check
-    ```
-
-These flags are necessary to:
-- Enable remote debugging via Chrome CDP
-- Use your personal Chrome profile
-- Skip first-run and default browser checks
 
 ### Step 4: Configure Environment Variables
 1. Copy `.env.examlpe` file to `.env` file in the project root.
@@ -105,8 +79,9 @@ These flags are necessary to:
     CHROME_USER_DATA="/Users/username/Library/Application Support/Google/Chrome"
     CHROME_CDP="http://localhost:9222"
     ```
+### Step 5: Close all opening Chrome tabs!! IMPORTANT!!
 
-### Step 5: Launch the Application
+### Step 6: Launch the web Application
 ```bash
 # Start with Gradio
 gradio webui.py
@@ -114,16 +89,37 @@ gradio webui.py
 # Or run directly with Python
 python webui.py
 ```
-
 The application will be available at `http://127.0.0.1:7860`
 
-### Development Mode of gradio
-For development with auto-reload:
-```bash
-gradio webui.py --watch src
-```
-This will automatically reload the browser when you make changes to files in the `src` directory.
+## Step 7: Open FireFox or Safari to open 127.0.0.1:7860
+- DO NOT use Chrome to open this web app.
 
+
+## Step 8: Start a clean Chrome Browser
+To enable the agent to use your personal Chrome browser, you need to start Chrome with specific flags:
+
+1. First, identify your Chrome application path:
+   - macOS: `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`
+   - Windows: `C:\Program Files\Google\Chrome\Application\chrome.exe`
+   - Linux: `/usr/bin/google-chrome`
+
+2. Execute Chrome with the following flags:
+  - replace {username} with your OS username
+    ```bash
+    # macOS example
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+    --remote-debugging-port=9222 \
+    --user-data-dir="/Users/{username}/Library/Application\ Support/Google/Chrome" \
+    --profile-directory="Default" \
+    --no-first-run \
+    --no-default-browser-check
+    ```
+3. Make sure that devtool websocket session is available
+  ```
+  DevTools listening on ws://127.0.0.1:9222/devtools/browser/1bbd94a9-aed9-4462-bc25-fddec9d9663c
+  ```
+
+---
 ## Background
 
 This project builds upon the foundation of [browser-use](https://github.com/browser-use/browser-use), which is designed to make websites accessible for AI agents.
@@ -137,3 +133,10 @@ We would like to officially thank [WarmShao](https://github.com/warmshao) for hi
 **Custom Browser Support:** You can use your own browser with our tool, eliminating the need to re-login to sites or deal with other authentication challenges. This feature also supports high-definition screen recording.
 
 **Persistent Browser Sessions:** You can choose to keep the browser window open between AI tasks, allowing you to see the complete history and state of AI interactions.
+
+### Development Mode of gradio
+For development with auto-reload:
+```bash
+gradio webui.py --watch src
+```
+This will automatically reload the browser when you make changes to files in the `src` directory.

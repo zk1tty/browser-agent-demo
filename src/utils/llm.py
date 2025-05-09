@@ -1,3 +1,5 @@
+import json
+import logging
 from openai import OpenAI
 import pdb
 from langchain_openai import ChatOpenAI
@@ -40,6 +42,7 @@ from typing import (
     cast,
 )
 
+logger = logging.getLogger(__name__)
 
 class DeepSeekR1ChatOpenAI(ChatOpenAI):
 
@@ -67,6 +70,12 @@ class DeepSeekR1ChatOpenAI(ChatOpenAI):
             else:
                 message_history.append({"role": "user", "content": input_.content})
 
+        # Log messages before API call
+        logger.info("\n📤 Messages being sent to API:")
+        logger.info(json.dumps(message_history, indent=2))
+        logger.info("-" * 50)
+
+        # TODO: This is where the LLM is called
         response = self.client.chat.completions.create(
             model=self.model_name,
             messages=message_history
@@ -93,6 +102,12 @@ class DeepSeekR1ChatOpenAI(ChatOpenAI):
             else:
                 message_history.append({"role": "user", "content": input_.content})
 
+        # Log messages before API call
+        logger.info("\n📤 Messages being sent to API:")
+        logger.info(json.dumps(message_history, indent=2))
+        logger.info("-" * 50)
+
+        # TODO: This is where the LLM is called
         response = self.client.chat.completions.create(
             model=self.model_name,
             messages=message_history

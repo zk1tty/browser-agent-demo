@@ -23,14 +23,27 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-
 class CustomController(Controller):
+    """A controller that extends browser_use controllerfunctionality.
+
+    Attributes:
+        exclude_actions (list[str]): List of actions to exclude from the controller.
+        output_model (Optional[Type[BaseModel]]): Optional custom output model for the controller.
+
+    Features:
+        - Clipboard operations (copy/paste)
+        - Browser keyboard simulation
+        - Standard browser actions
+        - Action exclusion capability
+        - Custom output model support
+    """
     def __init__(self, exclude_actions: list[str] = [],
                  output_model: Optional[Type[BaseModel]] = None
                  ):
         super().__init__(exclude_actions=exclude_actions, output_model=output_model)
         self._register_custom_actions()
 
+    # TRY: clipboard actions
     def _register_custom_actions(self):
         """Register all custom browser actions"""
 
