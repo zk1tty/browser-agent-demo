@@ -53,11 +53,19 @@ cd rebrowse-app
 
 ### Step 2: Set Up Python Environment
 
+- We recomended to use uv as reccomnede at the [brwoser-use doc](https://docs.browser-use.com/quickstart).
+- You can download uv from [here](https://docs.astral.sh/uv/#installation)
+
 ```bash
 # Create and activate a virtual environment
+# We recomended to use uv.
 uv venv --python 3.11
-source .venv/bin/activate  
-# On Windows, use: venv\Scripts\activate
+
+# For Mac/Linux:
+source .venv/bin/activate
+
+# For Windows:
+.venv\Scripts\activate
 
 # Install dependencies
 uv pip install -r requirements.txt
@@ -81,6 +89,15 @@ uv pip install -r requirements.txt
     ```
 ### Step 5: Close all opening Chrome tabs!! IMPORTANT!!
 
+<img src="https://raw.githubusercontent.com/zk1tty/rebrowse-app/main/assets/step_quit_chrome.png" alt="Quit Chrome" width="350" style="display: block; margin-left: 0;">
+
+Or, run this command.
+
+```
+pkill -9 "Google Chrome"
+```
+
+
 ### Step 6: Launch the web Application
 ```bash
 # Start with Gradio
@@ -91,11 +108,12 @@ python webui.py
 ```
 The application will be available at `http://127.0.0.1:7860`
 
-## Step 7: Open FireFox or Safari to open 127.0.0.1:7860
+### Step 7: Use FireFox or Safari to open 127.0.0.1:7860
 - DO NOT use Chrome to open this web app.
+- Open Safari or FIrefox, and go to "http://127.0.0.1:7860"
 
 
-## Step 8: Start a clean Chrome Browser
+### Step 8: Run a clean Chrome with CDP session
 To enable the agent to use your personal Chrome browser, you need to start Chrome with specific flags:
 
 1. First, identify your Chrome application path:
@@ -104,7 +122,7 @@ To enable the agent to use your personal Chrome browser, you need to start Chrom
    - Linux: `/usr/bin/google-chrome`
 
 2. Execute Chrome with the following flags:
-  - replace {username} with your OS username
+    ⚠️ Replace {username} with your OS username
     ```bash
     # macOS example
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
@@ -115,9 +133,14 @@ To enable the agent to use your personal Chrome browser, you need to start Chrom
     --no-default-browser-check
     ```
 3. Make sure that devtool websocket session is available
-  ```
-  DevTools listening on ws://127.0.0.1:9222/devtools/browser/1bbd94a9-aed9-4462-bc25-fddec9d9663c
-  ```
+    ```
+    DevTools listening on ws://127.0.0.1:9222/devtools/browser/1bbd94a9-aed9-4462-bc25-fddec9d9663c
+    ```
+### Step 9: Ready to play ^^
+- Go to "Choose Agent" tab
+- PItck up Preset Task
+- Try "Run Agent"
+- Enjoy your browseing agent.
 
 ---
 ## Background
