@@ -34,6 +34,7 @@ Example:
 Common action sequences:
 - Form filling: [{{"input_text": {{"index": 1, "text": "username"}}}}, {{"input_text": {{"index": 2, "text": "password"}}}}, {{"click_element": {{"index": 3}}}}]
 - Navigation and extraction: [{{"go_to_url": {{"url": "https://example.com"}}}}, {{"extract_content": {{"goal": "extract the names"}}}}]
+- Clipboard operations: [{{"copy_to_clipboard": {{"text": "text to copy"}}}}, {{"paste_from_clipboard": {{}}}}]
 - Actions are executed in the given order
 - If the page changes after an action, the sequence is interrupted and you get the new state.
 - Only provide the action sequence until an action which changes the page state significantly.

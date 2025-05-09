@@ -52,13 +52,15 @@ cd rebrowse-app
 ```
 
 ### Step 2: Set Up Python Environment
+
 ```bash
 # Create and activate a virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows, use: venv\Scripts\activate
+uv venv --python 3.11
+source .venv/bin/activate  
+# On Windows, use: venv\Scripts\activate
 
 # Install dependencies
-pip install -r requirements.txt
+uv pip install -r requirements.txt
 ```
 
 ### Step 3: Configure Chrome Browser
@@ -70,22 +72,19 @@ To enable the agent to use your personal Chrome browser, you need to start Chrom
    - Linux: `/usr/bin/google-chrome`
 
 2. Execute Chrome with the following flags:
-
-    > Note: replace {username} with your OS username for "--user-data-dir" flag.
-
+  - replace {username} with your OS username
     ```bash
     # macOS example
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
     --remote-debugging-port=9222 \
-    # TODO: replace {username} with your OS username
-    --user-data-dir="/Users/{username}/Library/Application Support/Google/Chrome" \
+    --user-data-dir="/Users/{username}/Library/Application\ Support/Google/Chrome" \
     --profile-directory="Default" \
     --no-first-run \
     --no-default-browser-check
     ```
 
 These flags are necessary to:
-- Enable remote debugging via Chrome CDP
+- Enable remote debugging via Chrome CDP, Chrome DevTools Protocol
 - Use your personal Chrome profile
 - Skip first-run and default browser checks
 
@@ -106,7 +105,7 @@ These flags are necessary to:
     CHROME_CDP="http://localhost:9222"
     ```
 
-### Step 5: Launch the Application
+### Step 5: Launch the Application with clean wnv
 ```bash
 # Start with Gradio
 gradio webui.py
@@ -114,6 +113,10 @@ gradio webui.py
 # Or run directly with Python
 python webui.py
 ```
+
+## Step 6: Close all opening Chrome tabs!! IMPORTANT!!
+
+## Step 7: Open FireFox or Safari to open 127.0.0.1:7860
 
 The application will be available at `http://127.0.0.1:7860`
 
