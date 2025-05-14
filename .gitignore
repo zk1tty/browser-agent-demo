@@ -187,3 +187,6 @@ data/
 
 # For Config Files (Current Settings)
 .config.pkl
+
+# ignore the Chorome custom profile
+custom_chrome_profile/

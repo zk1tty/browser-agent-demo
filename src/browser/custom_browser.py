@@ -1,6 +1,7 @@
 import asyncio
 import pdb
 import os
+from pathlib import Path
 
 from playwright.async_api import Browser as PlaywrightBrowser
 from playwright.async_api import (
@@ -41,26 +42,13 @@ class CustomBrowser(Browser):
                 # Add Chrome-specific flags
                 if not hasattr(self.config, 'extra_chromium_args'):
                     self.config.extra_chromium_args = []
+                project_root = Path(__file__).parent.resolve()
+                chrome_profile_dir = project_root / "custom_chrome_profile"
                 chrome_flags = [
-                    "--disable-features=NewTabPage",  # Prevent loading New Tab Page in non-browser-tab context
-                    "--profile-directory=Default",
+                    "--remote-debugging-port=9222",
+                    f'--user-data-dir={chrome_profile_dir}',
                     "--no-first-run",
-                    "--no-default-browser-check",
-                    "--user-data-dir=${HOME}/Library/Application Support/Google/Chrome",  # Use default Chrome profile
-                    "--disable-features=IsolateOrigins,site-per-process",
-                    "--disable-web-security",
-                    "--disable-site-isolation-trials",
-                    "--disable-blink-features=AutomationControlled",
-                    "--disable-features=IsolateOrigins,site-per-process,LavaMoat",
-                    "--disable-extensions",
-                    "--disable-gpu",
-                    "--no-sandbox",
-                    "--disable-setuid-sandbox",
-                    "--disable-dev-shm-usage",
-                    "--disable-software-rasterizer",
-                    "--disable-features=BlockInsecurePrivateNetworkRequests",
-                    "--disable-features=CrossSiteDocumentBlockingIfIsolating",
-                    "--disable-features=CrossSiteDocumentBlockingAlways"
+                    "--no-default-browser-check"
                 ]
                 self.config.extra_chromium_args.extend(chrome_flags)
                 logger.info(f"Added Chrome-specific flags: {chrome_flags}")
