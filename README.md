@@ -127,7 +127,10 @@ project file, and name it `/custom_chrome_profile` for debuging purpose.
     ```
 
 2. Run this Chrome using this new profile.
+<<<<<<< HEAD
     Configuration details to conenct to your own Chrome is [here](https://docs.browser-use.com/customize/real-browser). 
+=======
+>>>>>>> 8e4f0b9 (add run_custom_chrome.sh)
     
     ```bash
     sh run_custom_chrome.sh
