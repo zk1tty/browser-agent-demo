@@ -30,6 +30,7 @@ class CustomAgentMessagePrompt(AgentMessagePrompt):
             result: Optional[List[ActionResult]] = None,
             include_attributes: list[str] = [],
             step_info: Optional[CustomAgentStepInfo] = None,
+            history_summary: Optional[str] = None,
     ):
         super(CustomAgentMessagePrompt, self).__init__(state=state,
                                                        result=result,
@@ -37,6 +38,7 @@ class CustomAgentMessagePrompt(AgentMessagePrompt):
                                                        step_info=step_info
                                                        )
         self.actions = actions
+        self.history_summary = history_summary
 
     def get_user_message(self, use_vision: bool = True) -> HumanMessage:
         if self.step_info:
@@ -81,6 +83,9 @@ class CustomAgentMessagePrompt(AgentMessagePrompt):
 6. Interactive elements:
 {elements_text}
         """
+
+        if self.history_summary:
+            state_description += f"\n7. Recent History:\n{self.history_summary}\n"
 
         if self.actions and self.result:
             state_description += "\n **Previous Actions** \n"
