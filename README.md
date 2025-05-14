@@ -122,13 +122,18 @@ To enable the agent to use your personal Chrome browser, you need to start Chrom
    - Linux: `/usr/bin/google-chrome`
 
 2. Execute Chrome with the following flags:
-    ⚠️ Replace {username} with your OS username
+    ⚠️ Replace {username}with your OS username, and {path to the project root}.   
+    ⚠️ I'm temporary making the test profile on the same project file, and name it `/custom_chrome_profile` for debuging purpose.
+    ```
+    mkdir -p custom_chrome_profile
+    ```
+
+    Then run this Chrome using this new profile.
     ```bash
     # macOS example
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
     --remote-debugging-port=9222 \
-    --user-data-dir="/Users/{username}/Library/Application\ Support/Google/Chrome" \
-    --profile-directory="Default" \
+    --user-data-dir="/Users/{username}/{path to the project root}/custom_chrome_profile" \
     --no-first-run \
     --no-default-browser-check
     ```
@@ -136,6 +141,12 @@ To enable the agent to use your personal Chrome browser, you need to start Chrom
     ```
     DevTools listening on ws://127.0.0.1:9222/devtools/browser/1bbd94a9-aed9-4462-bc25-fddec9d9663c
     ```
+4. Setting up a new Chrome profile
+   In this process, you will create a new Chrome profile to be used by browser-agents.
+
+    - log in to your web accounts: X, LinkedIn, Youtube, etc.
+    - if browser-agent can skip this process, then easier to handle executions.
+
 ### Step 9: Ready to play ^^
 - Go to "Choose Agent" tab
 - PItck up Preset Task
