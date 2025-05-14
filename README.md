@@ -71,7 +71,7 @@ source .venv/bin/activate
 uv pip install -r requirements.txt
 ```
 
-### Step 4: Configure Environment Variables
+### Step 3: Configure Environment Variables
 1. Copy `.env.examlpe` file to `.env` file in the project root.
 
 2. Add API key, and update chrome path
@@ -82,12 +82,15 @@ uv pip install -r requirements.txt
 
     ```bash
     # Chrome Configuration
-    ## TODO: replace {username} with your OS username
+    # Note: Not MacOS user? please identify your Chrome application path:
+    # - Windows: `C:\Program Files\Google\Chrome\Application\chrome.exe`
+    # - Linux: `/usr/bin/google-chrome`
     CHROME_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-    CHROME_USER_DATA="/Users/username/Library/Application Support/Google/Chrome"
+    # replace {username}
+    CHROME_USER_DATA="/Users/{username}/Library/Application Support/Google/Chrome"
     CHROME_CDP="http://localhost:9222"
     ```
-### Step 5: Close all opening Chrome tabs!! IMPORTANT!!
+### Step 4: Close all opening Chrome tabs!! IMPORTANT!!
 
 <img src="https://raw.githubusercontent.com/zk1tty/rebrowse-app/main/assets/step_quit_chrome.png" alt="Quit Chrome" width="350" style="display: block; margin-left: 0;">
 
@@ -98,7 +101,7 @@ pkill -9 "Google Chrome"
 ```
 
 
-### Step 6: Launch the web Application
+### Step 5: Launch the web Application
 ```bash
 # Start with Gradio
 gradio webui.py
@@ -108,46 +111,37 @@ python webui.py
 ```
 The application will be available at `http://127.0.0.1:7860`
 
-### Step 7: Use FireFox or Safari to open 127.0.0.1:7860
+### Step 6: Use FireFox or Safari to open 127.0.0.1:7860
 - DO NOT use Chrome to open this web app.
 - Open Safari or FIrefox, and go to "http://127.0.0.1:7860"
 
 
-### Step 8: Run a clean Chrome with CDP session
-To enable the agent to use your personal Chrome browser, you need to start Chrome with specific flags:
+### Step 7: Run a clean Chrome with CDP session
+  
+⚠️ I'm temporary making the test profile on the same 
+project file, and name it `/custom_chrome_profile` for debuging purpose.
 
-1. First, identify your Chrome application path:
-   - macOS: `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`
-   - Windows: `C:\Program Files\Google\Chrome\Application\chrome.exe`
-   - Linux: `/usr/bin/google-chrome`
-
-2. Execute Chrome with the following flags:
-    ⚠️ Replace {username}with your OS username, and {path to the project root}.   
-    ⚠️ I'm temporary making the test profile on the same project file, and name it `/custom_chrome_profile` for debuging purpose.
+1. create a new clean chrome profile
     ```
     mkdir -p custom_chrome_profile
     ```
 
-    Then run this Chrome using this new profile.
+2. Run this Chrome using this new profile.
+    
     ```bash
-    # macOS example
-    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-    --remote-debugging-port=9222 \
-    --user-data-dir="/Users/{username}/{path to the project root}/custom_chrome_profile" \
-    --no-first-run \
-    --no-default-browser-check
+    sh run_custom_chrome.sh
     ```
+
 3. Make sure that devtool websocket session is available
     ```
     DevTools listening on ws://127.0.0.1:9222/devtools/browser/1bbd94a9-aed9-4462-bc25-fddec9d9663c
     ```
-4. Setting up a new Chrome profile
+4. Login web apps on a new Chrome profile
    In this process, you will create a new Chrome profile to be used by browser-agents.
-
     - log in to your web accounts: X, LinkedIn, Youtube, etc.
     - if browser-agent can skip this process, then easier to handle executions.
 
-### Step 9: Ready to play ^^
+### Step 8: Ready to play ^^
 - Go to "Choose Agent" tab
 - PItck up Preset Task
 - Try "Run Agent"
