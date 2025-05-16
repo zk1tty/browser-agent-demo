@@ -191,6 +191,12 @@ class CustomAgent(Agent):
     ):
         """
         update step info
+        @dev : New Memory from LLM stores at important_contents.
+            Usage of important_contents is
+            - Track progress in repetitive tasks (e.g., "for each", "for all", "x times")
+            - Store important information found during the task
+            - Keep track of status and subresults for long tasks
+            - Store extracted content from pages
         """
         if step_info is None:
             return
@@ -212,20 +218,23 @@ class CustomAgent(Agent):
         """Get next action from LLM based on current state"""
         fixed_input_messages = self._convert_input_messages(input_messages)
         
-        # Added: Convert messages to serializable format
+        # NEW: Convert messages to serializable format without image_url
+        def remove_image_url(item):
+            """Helper function to remove image_url from a dictionary item"""
+            if isinstance(item, dict):
+                return {k: v for k, v in item.items() if k != 'image_url'}
+            return item
+
         cleaned_messages = []
         for msg in fixed_input_messages:
             if isinstance(msg, dict):
-                # Create a copy of the message without image_url
-                cleaned_msg = {k: v for k, v in msg.items() if k != 'image_url'}
-                cleaned_messages.append(cleaned_msg)
+                cleaned_messages.append(remove_image_url(msg))
             elif hasattr(msg, 'type') and hasattr(msg, 'content'):
                 # Handle LangChain message objects
                 cleaned_msg = {
                     'type': msg.type,
                     'content': msg.content if not isinstance(msg.content, list) else [
-                        {k: v for k, v in item.items() if k != 'image_url'}
-                        for item in msg.content
+                        remove_image_url(item) for item in msg.content
                     ]
                 }
                 cleaned_messages.append(cleaned_msg)
@@ -233,7 +242,11 @@ class CustomAgent(Agent):
                 # Handle other types
                 cleaned_messages.append(str(msg))
         
-        logger.debug(f"fixed_input_messages: {json.dumps(cleaned_messages, indent=2)}")
+        # Log both structure and content with JSON indentation
+        # The final result is stored at debug/input_message.txt
+        json_str = json.dumps([{'type': m.get('type') if isinstance(m, dict) else type(m).__name__, 'content': m.get('content') if isinstance(m, dict) else m} for m in cleaned_messages], indent=2)
+        formatted_str = json_str.replace(r'\n', '\n')
+        logger.info(f"cleaned_messages: {formatted_str}")
 
         # TODO: This is where the LLM is called
         ai_message = self.llm.invoke(fixed_input_messages)
@@ -426,11 +439,11 @@ class CustomAgent(Agent):
             elif history_item.result: # Check if there were results at all
                  line += " | Results: OK" # Assume OK if results exist but no errors were logged
 
-            line += "\\n"
+            line += "\n"
 
             if char_count + len(line) > max_chars and summary_lines:
                  # Stop if adding this line exceeds char limit (and we already have some lines)
-                 summary_lines.append("... (history truncated due to length)\\n")
+                 summary_lines.append("... (history truncated due to length)\n")
                  break
 
             summary_lines.append(line)
@@ -440,7 +453,7 @@ class CustomAgent(Agent):
             return "No recent history processed."
 
         # Reverse back to chronological order and join
-        return "Browsing History (Recent Steps):\\n" + "".join(reversed(summary_lines))
+        return "Browsing History (Recent Steps):\n" + "".join(reversed(summary_lines))
 
     @time_execution_async("--step")
     async def step(self, step_info: Optional[CustomAgentStepInfo] = None) -> None:
