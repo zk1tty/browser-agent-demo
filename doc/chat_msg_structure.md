@@ -4,6 +4,10 @@
 `{type:human}` message is the input to the LLM, sharing the browser status.   
 `{type:ai}` message is the input from the LLM, epresenting its internal reasoning, decisions, and the actions it has taken or plans to take.
 
+### system-message:
+
+System prompt is declared at [custom_system_prompt.md](../src/agent/custom_system_prompt.md).
+
 ### human-message:
 - Represents input from the human user.
 - This is what the user types or provides to the system (e.g., instructions, queries, corrections, or data).
