@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 import gradio as gr
 import inspect
 from functools import wraps
+from gradio.components import Component
 
 from browser_use.agent.service import Agent
 from playwright.async_api import async_playwright
@@ -86,7 +87,7 @@ def scan_and_register_components(blocks):
         # Process components of the Blocks object
         if hasattr(block, "children"):
             for i, child in enumerate(block.children):
-                if isinstance(child, gr.components.Component):
+                if isinstance(child, Component):
                     # Exclude Button components
                     if getattr(child, "interactive", False) and not isinstance(child, gr.Button):
                         name = f"{prefix}component_{i}"
@@ -267,7 +268,9 @@ async def run_browser_agent(
                 max_actions_per_step=max_actions_per_step,
                 tool_calling_method=tool_calling_method,
                 chrome_cdp=chrome_cdp,
-                max_input_tokens=max_input_tokens
+                max_input_tokens=max_input_tokens,
+                enable_input_tracking=enable_input_tracking,
+                save_input_tracking_path=save_input_tracking_path
             )
         elif agent_type == "custom":
             final_result, errors, model_actions, model_thoughts, trace_file, history_file = await run_custom_agent(
@@ -356,7 +359,9 @@ async def run_org_agent(
         max_actions_per_step,
         tool_calling_method,
         chrome_cdp,
-        max_input_tokens
+        max_input_tokens,
+        enable_input_tracking: bool = False,
+        save_input_tracking_path: str = "./tmp/input_tracking"
 ):
     try:
         global _global_browser, _global_browser_context, _global_agent
@@ -911,6 +916,7 @@ async def start_input_tracking_with_context():
                 extra_chromium_args=[]
             )
         )
+        await _global_browser.async_init()  # Initialize the Playwright browser
 
     # Ensure context exists
     if _global_browser_context is None:
@@ -928,7 +934,7 @@ async def start_input_tracking_with_context():
     # Now start input tracking
     return await user_input_functions.start_input_tracking()
 
-def create_ui(theme_name="Ocean"):
+def create_ui(theme_name="Citrus"):
     css = """
     .gradio-container {
         width: 60vw !important; 
@@ -1424,15 +1430,15 @@ def create_ui(theme_name="Ocean"):
                     outputs=[stop_repeat_btn, run_repeat_btn]
                 )
                 
-            # New Input Tracking tab
-            with gr.TabItem("📝 Input Tracking", id=10):
+            # New: Record tab
+            with gr.TabItem("🛑 Record", id=10):
                 
-                gr.Markdown("### 🔴 Record User Input")
+                gr.Markdown("### 🛑 Record User Input")
                 with gr.Row():
                     with gr.Column(scale=2):
                         input_track_status = gr.Textbox(
-                            label="Tracking Status",
-                            value="Input tracking not started",
+                            label="Recording Status",
+                            value="Recording not started",
                             interactive=False
                         )
                     with gr.Column(scale=1):
@@ -1563,7 +1569,7 @@ def create_ui(theme_name="Ocean"):
                 
                 # Add a function to auto-refresh when the tab loads
                 def on_tab_select(tab_id):
-                    if tab_id == "📝 Input Tracking":
+                    if tab_id == "🛑 Record":
                         return refresh_traces()
                     return []
                     
@@ -1602,7 +1608,7 @@ def create_ui(theme_name="Ocean"):
     return demo
 
 # Build once; let the `gradio` CLI launch & reload
-demo = create_ui(theme_name="Ocean")   # gradio looks for "demo"
+demo = create_ui(theme_name="Citrus")   # gradio looks for "demo"
 app  = demo                            # optional alias, harmless
 
 # --- allow plain `python webui.py` ----------------------------------
