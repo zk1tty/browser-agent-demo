@@ -46,11 +46,14 @@ from src.controller.custom_controller import CustomController
 from gradio.themes import Citrus, Default, Glass, Monochrome, Ocean, Origin, Soft, Base
 from src.utils.utils import update_model_dropdown, get_latest_files, capture_screenshot, MissingAPIKeyError
 from src.utils import utils
+from src.browser.custom_context_config import CustomBrowserContextConfig
+from pathlib import Path
 
 # Global variables for persistence
 _global_browser = None
 _global_browser_context = None
 _global_agent = None
+_global_input_tracking_active = False
 
 # Create the global agent state instance
 _global_agent_state = AgentState()
@@ -58,9 +61,12 @@ _global_agent_state = AgentState()
 # webui config
 webui_config_manager = utils.ConfigManager()
 
-# ✨ NEW – import json and typing for repeat feature
+# New: repeat feature
 import json
 from typing import Tuple, List, Dict, Any
+
+# New: user input tracking functions
+from src.utils import user_input_functions
 
 def _extract_initial_actions(history_json: Dict[str, Any]) -> List[Dict[str, Any]]:
     """
@@ -71,28 +77,28 @@ def _extract_initial_actions(history_json: Dict[str, Any]) -> List[Dict[str, Any
     return first['model_output']['action']
 
 def scan_and_register_components(blocks):
-    """扫描一个 Blocks 对象并注册其中的所有交互式组件，但不包括按钮"""
+    """Scan a Blocks object and register all interactive components, excluding buttons"""
     global webui_config_manager
 
     def traverse_blocks(block, prefix=""):
         registered = 0
 
-        # 处理 Blocks 自身的组件
+        # Process components of the Blocks object
         if hasattr(block, "children"):
             for i, child in enumerate(block.children):
                 if isinstance(child, gr.components.Component):
-                    # 排除按钮 (Button) 组件
+                    # Exclude Button components
                     if getattr(child, "interactive", False) and not isinstance(child, gr.Button):
                         name = f"{prefix}component_{i}"
                         if hasattr(child, "label") and child.label:
-                            # 使用标签作为名称的一部分
+                            # Use label as part of the name
                             label = child.label
                             name = f"{prefix}{label}"
                         logger.debug(f"Registering component: {name}")
                         webui_config_manager.register_component(name, child)
                         registered += 1
                 elif hasattr(child, "children"):
-                    # 递归处理嵌套的 Blocks
+                    # Recursively process nested Blocks
                     new_prefix = f"{prefix}block_{i}_"
                     registered += traverse_blocks(child, new_prefix)
 
@@ -100,7 +106,6 @@ def scan_and_register_components(blocks):
 
     total = traverse_blocks(blocks)
     logger.info(f"Total registered components: {total}")
-
 
 def save_current_config():
     return webui_config_manager.save_current_config()
@@ -212,7 +217,9 @@ async def run_browser_agent(
         max_actions_per_step,
         tool_calling_method,
         chrome_cdp,
-        max_input_tokens
+        max_input_tokens,
+        enable_input_tracking=False,
+        save_input_tracking_path="./tmp/input_tracking"
 ):
     try:
         # Disable recording if the checkbox is unchecked
@@ -281,7 +288,9 @@ async def run_browser_agent(
                 max_actions_per_step=max_actions_per_step,
                 tool_calling_method=tool_calling_method,
                 chrome_cdp=chrome_cdp,
-                max_input_tokens=max_input_tokens
+                max_input_tokens=max_input_tokens,
+                enable_input_tracking=enable_input_tracking,
+                save_input_tracking_path=save_input_tracking_path
             )
         else:
             raise ValueError(f"Invalid agent type: {agent_type}")
@@ -330,7 +339,6 @@ async def run_browser_agent(
             gr.update(interactive=True)  # Re-enable run button
         )
 
-
 async def run_org_agent(
         llm,
         use_own_browser,
@@ -352,6 +360,9 @@ async def run_org_agent(
 ):
     try:
         global _global_browser, _global_browser_context, _global_agent
+        
+        # Update the browser context reference in user_input_functions
+        user_input_functions.set_browser_context(_global_browser_context)
 
         extra_chromium_args = [f"--window-size={window_w},{window_h}"]
         cdp_url = chrome_cdp
@@ -387,14 +398,17 @@ async def run_org_agent(
             )
 
         if _global_browser_context is None:
+            # Use CustomBrowserContextConfig to support input tracking
             _global_browser_context = await _global_browser.new_context(
-                config=BrowserContextConfig(
+                config=CustomBrowserContextConfig(
                     trace_path=save_trace_path if save_trace_path else None,
                     save_recording_path=save_recording_path if save_recording_path else None,
                     no_viewport=False,
                     browser_window_size=BrowserContextWindowSize(
                         width=window_w, height=window_h
                     ),
+                    enable_input_tracking=enable_input_tracking,
+                    save_input_tracking_path=save_input_tracking_path
                 )
             )
 
@@ -440,7 +454,6 @@ async def run_org_agent(
                 await _global_browser.close()
                 _global_browser = None
 
-
 async def run_custom_agent(
         llm,
         use_own_browser,
@@ -459,23 +472,28 @@ async def run_custom_agent(
         max_actions_per_step,
         tool_calling_method,
         chrome_cdp,
-        max_input_tokens
+        max_input_tokens,
+        enable_input_tracking,
+        save_input_tracking_path
 ):
     try:
         global _global_browser, _global_browser_context, _global_agent
-
+        
+        # Configure browser settings
         extra_chromium_args = [f"--window-size={window_w},{window_h}"]
         cdp_url = chrome_cdp
+        chrome_path = None
+        chrome_user_data = None
+
         if use_own_browser:
             cdp_url = os.getenv("CHROME_CDP", chrome_cdp)
-
             chrome_path = os.getenv("CHROME_PATH", None)
             if chrome_path == "":
                 chrome_path = None
             chrome_user_data = os.getenv("CHROME_USER_DATA", None)
             if chrome_user_data:
+                # Add Chrome-specific flags (excluding user-data-dir as it's handled by launch_persistent_context)
                 extra_chromium_args += [
-                    f"--user-data-dir={chrome_user_data}",
                     "--profile-directory=Default",
                     "--no-first-run",
                     "--no-default-browser-check",
@@ -483,14 +501,9 @@ async def run_custom_agent(
                     "--disable-web-security",
                     "--disable-site-isolation-trials"
                 ]
-        else:
-            chrome_path = None
-
-        controller = CustomController()
 
         # Initialize global browser if needed
-        # if chrome_cdp not empty string nor None
-        if (_global_browser is None) or (cdp_url and cdp_url != "" and cdp_url != None):
+        if _global_browser is None:
             _global_browser = CustomBrowser(
                 config=BrowserConfig(
                     headless=headless,
@@ -500,18 +513,27 @@ async def run_custom_agent(
                     extra_chromium_args=extra_chromium_args,
                 )
             )
+            await _global_browser.async_init()  # Initialize the Playwright browser
 
-        if _global_browser_context is None or (chrome_cdp and cdp_url != "" and cdp_url != None):
+        if _global_browser_context is None:
+            # Use CustomBrowserContextConfig to support input tracking
             _global_browser_context = await _global_browser.new_context(
-                config=BrowserContextConfig(
+                config=CustomBrowserContextConfig(
                     trace_path=save_trace_path if save_trace_path else None,
                     save_recording_path=save_recording_path if save_recording_path else None,
                     no_viewport=False,
                     browser_window_size=BrowserContextWindowSize(
                         width=window_w, height=window_h
                     ),
+                    enable_input_tracking=enable_input_tracking,
+                    save_input_tracking_path=save_input_tracking_path
                 )
             )
+
+        # Update the browser context reference in user_input_functions
+        user_input_functions.set_browser_context(_global_browser_context)
+
+        controller = CustomController()
 
         # Create and run agent
         if _global_agent is None:
@@ -586,7 +608,9 @@ async def run_with_stream(
         max_actions_per_step,
         tool_calling_method,
         chrome_cdp,
-        max_input_tokens
+        max_input_tokens,
+        enable_input_tracking=False,
+        save_input_tracking_path="./tmp/input_tracking"
 ):
     global _global_agent
 
@@ -618,7 +642,9 @@ async def run_with_stream(
             max_actions_per_step=max_actions_per_step,
             tool_calling_method=tool_calling_method,
             chrome_cdp=chrome_cdp,
-            max_input_tokens=max_input_tokens
+            max_input_tokens=max_input_tokens,
+            enable_input_tracking=enable_input_tracking,
+            save_input_tracking_path=save_input_tracking_path
         )
         # Add HTML content at the start of the result array
         yield [gr.update(visible=False)] + list(result)
@@ -651,7 +677,9 @@ async def run_with_stream(
                     max_actions_per_step=max_actions_per_step,
                     tool_calling_method=tool_calling_method,
                     chrome_cdp=chrome_cdp,
-                    max_input_tokens=max_input_tokens
+                    max_input_tokens=max_input_tokens,
+                    enable_input_tracking=enable_input_tracking,
+                    save_input_tracking_path=save_input_tracking_path
                 )
             )
 
@@ -742,7 +770,6 @@ async def run_with_stream(
                 gr.update(value="Stop", interactive=True),  # Re-enable stop button
                 gr.update(interactive=True)  # Re-enable run button
             ]
-
 
 # Define the theme map globally
 theme_map = {
@@ -869,6 +896,37 @@ async def run_repeat(
     )
     return result, errors
 
+# New: coroutine to start input tracking with context
+async def start_input_tracking_with_context():
+    global _global_browser, _global_browser_context
+
+    # Ensure browser exists
+    if _global_browser is None:
+        _global_browser = CustomBrowser(
+            config=BrowserConfig(
+                headless=False,
+                disable_security=True,
+                cdp_url="http://localhost:9222",  # Adjust as needed
+                chrome_instance_path=None,        # Adjust as needed
+                extra_chromium_args=[]
+            )
+        )
+
+    # Ensure context exists
+    if _global_browser_context is None:
+        _global_browser_context = await _global_browser.new_context(
+            config=CustomBrowserContextConfig(
+                enable_input_tracking=True,
+                save_input_tracking_path="./tmp/input_tracking",
+                browser_window_size=BrowserContextWindowSize(width=1280, height=1100)
+            )
+        )
+
+    # Set the context for user_input_functions
+    user_input_functions.set_browser_context(_global_browser_context)
+
+    # Now start input tracking
+    return await user_input_functions.start_input_tracking()
 
 def create_ui(theme_name="Ocean"):
     css = """
@@ -893,6 +951,25 @@ def create_ui(theme_name="Ocean"):
         resize: both !important;
         min-height: 100px !important;
         overflow: auto !important;
+    }
+    /* Styles for the trace table */
+    .trace-table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+    .trace-table th, .trace-table td {
+        border: 1px solid #ddd;
+        padding: 8px;
+        text-align: left;
+    }
+    .trace-table tr:nth-child(even) {
+        background-color: #f2f2f2;
+    }
+    .trace-table th {
+        padding-top: 12px;
+        padding-bottom: 12px;
+        background-color: #4CAF50;
+        color: white;
     }
     """
 
@@ -1089,8 +1166,24 @@ def create_ui(theme_name="Ocean"):
                         info="Specify the directory where agent history should be saved.",
                         interactive=True,
                     )
+                    
+                    # User input tracking settings
+                    enable_input_tracking = gr.Checkbox(
+                        label="Enable User Input Tracking",
+                        value=False,
+                        info="Enable tracking of user mouse and keyboard inputs for recording workflows",
+                        interactive=True
+                    )
+                    
+                    save_input_tracking_path = gr.Textbox(
+                        label="Input Tracking Save Path",
+                        placeholder="e.g., ./tmp/input_tracking",
+                        value="./tmp/input_tracking",
+                        info="Specify the directory where user input tracking files should be saved.",
+                        interactive=True,
+                    )
 
-            with gr.TabItem("🤖 Choose Agent", id=1):
+            with gr.TabItem("🤖 Prompt Agent", id=1):
                 with gr.Row():
                     with gr.Column():
                         gr.Markdown("### Preset Tasks")
@@ -1103,7 +1196,7 @@ def create_ui(theme_name="Ocean"):
                     label="Task Description",
                     lines=8,
                     placeholder="Enter your task here...",
-                    value="go to 'X.com', then:\n1. Wait 2 seconds after the page loads\n2. Click the 'Post' button\n3. Wait 1 second after the post dialog opens\n4. In the text input field, type the text VERY SLOWLY and CAREFULLY:\n   '  hello world, I'm https://rebrowse.me  '\n5. After typing, verify EACH CHARACTER:\n   - Starts with 'h'\n   - Ends with 'e' \n6. If ANY character is wrong, clear the field completely and type again\n7. Only click 'Post' when you've verified every character is correct\n8. If you see a rate limit error, wait 30 seconds before retrying",
+                    value="go to 'X.com', then:\n1. Wait 2 seconds after the page loads\n2. Click the 'Post' button\n3. Wait 1 second after the post dialog opens\n4. In the text input field, type the text VERY SLOWLY and CAREFULLY:\n   '  hello world, I'm https://rebrowse.me  '\n5. After typing, verify EACH CHARACTER:\n   - Starts with 'h'\n6. Only click 'Post' when you've verified every character is correct\n7. If you see a rate limit error, wait 30 seconds before retrying",
                     info="Describe what you want the agent to do",
                     interactive=True,
                     elem_classes=["resizable-textbox"]
@@ -1197,9 +1290,9 @@ def create_ui(theme_name="Ocean"):
                     agent_type, llm_provider, llm_model_name, ollama_num_ctx, llm_temperature, llm_base_url,
                     llm_api_key,
                     use_own_browser, keep_browser_open, headless, disable_security, window_w, window_h,
-                    save_recording_path, save_agent_history_path, save_trace_path,  # Include the new path
+                    save_recording_path, save_agent_history_path, save_trace_path,
                     enable_recording, task, add_infos, max_steps, use_vision, max_actions_per_step,
-                    tool_calling_method, chrome_cdp, max_input_tokens
+                    tool_calling_method, chrome_cdp, max_input_tokens, enable_input_tracking, save_input_tracking_path
                 ],
                 outputs=[
                     browser_view,  # Browser view
@@ -1213,6 +1306,13 @@ def create_ui(theme_name="Ocean"):
                     stop_button,  # Stop button
                     run_button  # Run button
                 ],
+            )
+            
+            # Add input tracking checkbox to sync with save path
+            enable_input_tracking.change(
+                lambda enabled: gr.update(interactive=enabled),
+                inputs=enable_input_tracking,
+                outputs=save_input_tracking_path
             )
 
             # Run Deep Research
@@ -1322,6 +1422,155 @@ def create_ui(theme_name="Ocean"):
                     fn=stop_agent,
                     inputs=[],
                     outputs=[stop_repeat_btn, run_repeat_btn]
+                )
+                
+            # New Input Tracking tab
+            with gr.TabItem("📝 Input Tracking", id=10):
+                
+                gr.Markdown("### 🔴 Record User Input")
+                with gr.Row():
+                    with gr.Column(scale=2):
+                        input_track_status = gr.Textbox(
+                            label="Tracking Status",
+                            value="Input tracking not started",
+                            interactive=False
+                        )
+                    with gr.Column(scale=1):
+                        input_track_start_btn = gr.Button("▶️ Start Recording", variant="primary")
+                        input_track_stop_btn = gr.Button("⏹️ Stop Recording", variant="stop")
+                
+                gr.Markdown("### 📂 Input Trace Files")
+                
+                refresh_traces_btn = gr.Button("🔄 Refresh Trace Files", variant="secondary")
+                
+                trace_file_path = gr.Textbox(
+                    label="Selected Trace File",
+                    value="",
+                    interactive=False,
+                    visible=False
+                )
+                
+                trace_files_list = gr.Dataframe(
+                    headers=["Name", "Created", "Size", "Events"],
+                    label="Available Traces",
+                    interactive=True,
+                    wrap=True
+                )
+                
+                with gr.Row():
+                    trace_info = gr.JSON(
+                        label="Trace File Info",
+                        value={"message": "Select a trace file above to view details"}
+                    )
+                    trace_actions = gr.Column()
+                    with trace_actions:
+                        trace_replay_btn = gr.Button("▶️ Replay Selected Trace", variant="primary")
+                        trace_delete_btn = gr.Button("🗑️ Delete Selected Trace", variant="stop")
+                
+                # Connect event handlers
+                input_track_start_btn.click(
+                    fn=start_input_tracking_with_context,
+                    inputs=[],
+                    outputs=[input_track_status, input_track_stop_btn, trace_file_path]
+                )
+                
+                input_track_stop_btn.click(
+                    fn=user_input_functions.stop_input_tracking,
+                    inputs=[],
+                    outputs=[input_track_status, input_track_stop_btn, trace_file_path]
+                )
+                
+                def get_trace_file_path(df, evt: gr.SelectData):
+                    if df is None or len(df) == 0:
+                        return ""
+                    try:
+                        return df.iloc[evt.index[0]]["path"]
+                    except (KeyError, IndexError):
+                        return ""
+                
+                trace_files_list.select(
+                    fn=get_trace_file_path,
+                    inputs=[trace_files_list],
+                    outputs=[trace_file_path]
+                )
+                
+                def update_trace_info(trace_path):
+                    if not trace_path:
+                        return {"message": "No trace file selected"}
+                    info = user_input_functions.get_file_info(trace_path)
+                    return info
+                
+                trace_file_path.change(
+                    fn=update_trace_info,
+                    inputs=[trace_file_path],
+                    outputs=[trace_info]
+                )
+                
+                def refresh_traces():
+                    try:
+                        files = user_input_functions.list_input_trace_files(save_input_tracking_path.value)
+                        data = []
+                        for file in files:
+                            data.append({
+                                "path": file["path"],
+                                "Name": file["name"],
+                                "Created": file["created"],
+                                "Size": file["size"],
+                                "Events": file["events"]
+                            })
+                        return data
+                    except Exception as e:
+                        logger.error(f"Error refreshing traces: {str(e)}")
+                        return [{"Name": f"Error: {str(e)}"}]
+                        
+                def delete_trace_file(trace_path):
+                    if not trace_path:
+                        return "No file selected", []
+                    try:
+                        if os.path.exists(trace_path):
+                            os.remove(trace_path)
+                            return f"Deleted: {os.path.basename(trace_path)}", refresh_traces()
+                        else:
+                            return "File not found", []
+                    except Exception as e:
+                        logger.error(f"Error deleting trace file: {str(e)}")
+                        return f"Error: {str(e)}", []
+                
+                refresh_traces_btn.click(
+                    fn=refresh_traces,
+                    inputs=[],
+                    outputs=[trace_files_list]
+                )
+                
+                trace_replay_btn.click(
+                    fn=user_input_functions.replay_input_trace,
+                    inputs=[trace_file_path],
+                    outputs=[input_track_status]
+                )
+                
+                trace_delete_btn.click(
+                    fn=delete_trace_file,
+                    inputs=[trace_file_path],
+                    outputs=[input_track_status, trace_files_list]
+                )
+                
+                # Automatically refresh the trace files list - simpler approach without _js
+                tabs.select(
+                    fn=lambda: None,
+                    inputs=[],
+                    outputs=[]
+                )
+                
+                # Add a function to auto-refresh when the tab loads
+                def on_tab_select(tab_id):
+                    if tab_id == "📝 Input Tracking":
+                        return refresh_traces()
+                    return []
+                    
+                tabs.select(
+                    fn=on_tab_select,
+                    inputs=[],
+                    outputs=[trace_files_list]
                 )
 
         # Attach the callback to the LLM provider dropdown

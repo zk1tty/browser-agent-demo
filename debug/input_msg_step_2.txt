@@ -1,0 +1,334 @@
+2025-05-17 00:14:12 - src.agent.custom_agent - INFO - cleaned_messages: [
+  {
+    "type": "system",
+    "content": "You are an AI agent designed to automate browser tasks. Your goal is to accomplish the ultimate task following the rules.
+
+# Input Format
+Task
+Previous steps
+Current URL
+Open Tabs
+Interactive Elements
+[index]<type>text</type>
+- index: Numeric identifier for interaction
+- type: HTML element type (button, input, etc.)
+- text: Element description
+Example:
+[33]<button>Submit Form</button>
+
+- Only elements with numeric indexes in [] are interactive
+- elements without [] provide only context
+
+# Response Rules
+1. RESPONSE FORMAT: You must ALWAYS respond with valid JSON in this exact format:
+{
+  "current_state": {
+    "evaluation_previous_goal": "Success|Failed|Unknown - Analyze the current elements and the image to check if the previous goals/actions are successful like intended by the task. Mention if something unexpected happened. Shortly state why/why not.",
+    "important_contents": "Output important contents closely related to user's instruction on the current page. If there is, please output the contents. If not, please output empty string ''.",
+    "thought": "Think about the requirements that have been completed in previous operations and the requirements that need to be completed in the next one operation. If your output of evaluation_previous_goal is 'Failed', please reflect and output your reflection here.",
+    "next_goal": "Please generate a brief natural language description for the goal of your next actions based on your thought."
+  },
+  "action": [
+    {"one_action_name": {// action-specific parameter}}, // ... more actions in sequence
+  ]
+}
+
+2. ACTIONS: You can specify multiple actions in the list to be executed in sequence. But always specify only one action name per item. Use maximum {max_actions} actions per sequence.
+Common action sequences:
+- Form filling: [{"input_text": {"index": 1, "text": "username"}}, {"input_text": {"index": 2, "text": "password"}}, {"click_element": {"index": 3}}]
+- Navigation and extraction: [{"go_to_url": {"url": "https://example.com"}}, {"extract_content": {"goal": "extract the names"}}]
+- Clipboard operations: [{"copy_to_clipboard": {"text": "text to copy"}}, {"paste_from_clipboard": {}}]
+- Actions are executed in the given order
+- If the page changes after an action, the sequence is interrupted and you get the new state.
+- Only provide the action sequence until an action which changes the page state significantly.
+- Try to be efficient, e.g. fill forms at once, or chain actions where nothing changes on the page
+- only use multiple actions if it makes sense.
+
+3. ELEMENT INTERACTION:
+- Only use indexes of the interactive elements
+- Elements marked with "[]Non-interactive text" are non-interactive
+
+4. NAVIGATION & ERROR HANDLING:
+- If no suitable elements exist, use other functions to complete the task
+- If stuck, try alternative approaches - like going back to a previous page, new search, new tab etc.
+- Handle popups/cookies by accepting or closing them
+- Use scroll to find elements you are looking for
+- If you want to research something, open a new tab instead of using the current tab
+- If captcha pops up, try to solve it - else try a different approach
+- If the page is not fully loaded, use wait action
+
+5. TASK COMPLETION:
+- Use the done action as the last action as soon as the ultimate task is complete
+- Dont use "done" before you are done with everything the user asked you, except you reach the last step of max_steps. 
+- If you reach your last step, use the done action even if the task is not fully finished. Provide all the information you have gathered so far. If the ultimate task is completly finished set success to true. If not everything the user asked for is completed set success in done to false!
+- If you have to do something repeatedly for example the task says for "each", or "for all", or "x times", count always inside "memory" how many times you have done it and how many remain. Don't stop until you have completed like the task asked you. Only call done after the last step.
+- Don't hallucinate actions
+- Make sure you include everything you found out for the ultimate task in the done text parameter. Do not just say you are done, but include the requested information of the task. 
+
+6. VISUAL CONTEXT:
+- When an image is provided, use it to understand the page layout
+- Bounding boxes with labels on their top right corner correspond to element indexes
+
+7. Form filling:
+- If you fill an input field and your action sequence is interrupted, most often something changed e.g. suggestions popped up under the field.
+
+8. Long tasks:
+- Keep track of the status and subresults in the memory. 
+
+9. Extraction:
+- If your task is to find information - call extract_content on the specific pages to get and store the information.
+Your responses must be always JSON with the specified format."
+  },
+  {
+    "type": "ai",
+    "content": "```json
+{
+  \"current_state\": {
+    \"evaluation_previous_goal\": \"Success - The page is loaded and elements like 'Post' button are available.\",
+    \"important_contents\": \"\",
+    \"thought\": \"The next step is to wait for 2 seconds and then click the 'Post' button to open the dialog.\",
+    \"next_goal\": \"Wait for 2 seconds and click the 'Post' button to open the post dialog.\"
+  },
+  \"action\": [
+    {\"wait\": {\"seconds\": 2}},
+    {\"click_element\": {\"index\": 39}}
+  ]
+}
+```"
+  },
+  {
+    "type": "human",
+    "content": [
+      {
+        "type": "text",
+        "text": "
+Current step: 2/100
+Current date and time: 2025-05-17 00:14
+1. Task: go to 'X.com', then:
+    1. Wait 2 seconds after the page loads
+    2. Click the 'Post' button
+    3. Wait 1 second after the post dialog opens
+    4. In the text input field, type the text VERY SLOWLY and CAREFULLY:
+    '  hello world, I'm https://rebrowse.me  '
+    5. After typing, verify EACH CHARACTER:
+    - Starts with 'h'
+    6. Only click 'Post' when you've verified every character is correct
+    7. If you see a rate limit error, wait 30 seconds before retrying. 
+2. Hints(Optional): 
+
+3. Memory: 
+
+4. Current url: https://x.com/compose/post
+5. Available tabs:
+[TabInfo(page_id=0, url='https://x.com/compose/post', title='(3) Home / X')]
+6. Interactive elements:
+        [Start of page]
+        [0]<div To view keyboard shortcuts, press question mark
+        View keyboard shortcuts
+        Messages
+        Home
+        Explore
+        2
+        Notifications
+        1
+        Messages
+        Grok
+        Premium
+        Bookmarks
+        Jobs
+        Communities
+        Verified Orgs
+        Profile
+        More
+        Post
+        nori@rebrowse
+        @n0rizkitty
+        For you
+        Following
+        daos.fun engineers
+        Mother AI
+        Web3 Growth & Marketing
+        Build in Public
+        AI/ML engineers hub
+        agents monitoring
+        The Basilisk's Eternal Court
+        See new posts
+        What's happening?
+        Post
+        Your Home Timeline
+        Show 175 posts
+        nori@rebrowse
+        @n0rizkitty
+        ·
+        5m
+        hello world, I'm
+        https://
+        rebrowse.me
+        DappaDan
+        @DAppaDanDev
+        ·
+        43m
+        shoutout to all the people making crypto swag you can move in 
+
+        helping me get that summer bod for the beaches at
+        @EthCC
+        1
+        13
+        184
+        Upgrade to Premium+
+        Enjoy additional benefits, zero ads and the largest reply prioritization.
+        Upgrade to Premium+
+        Trending now
+        What's happening
+        Going Public
+        LIVE
+        #MissionImpossible8MY
+        Di pawagam 17 Mei. Beli tiket sekarang!
+        Promoted by UIP Malaysia
+        Trending in Malaysia
+        #ลูกหมีซอนญ่า
+        20.8K posts
+        Trending in Malaysia
+        #น้ําตาลฟิล์ม
+        24.2K posts
+        Politics · Trending
+        Arabs
+        39.5K posts
+        Show more
+        Who to follow
+        Alborz Mirzaie
+        @borzaie
+        Follow
+        Click to Follow borzaie
+        Kseniia Baziian
+        @KseniiaBaziian
+        Follow
+        Click to Follow KseniiaBaziian
+        Click to Follow sfursumon
+        |
+        |
+        |
+        © 2025 X Corp./>
+        [1]<div group/>
+        [2]<div progressbar/>
+        [3]<button Close/>
+        [4]<button Drafts/>
+        [5]<div />
+        [6]<div />
+        [7]<div presentation/>
+        [8]<div />
+        [9]<div />
+        [10]<button false;Choose audience>Everyone/>
+        [11]<div What's happening?/>
+        [12]<div textbox;Post text/>
+        [13]<div />
+        [14]<div />
+        [15]<div />
+        [16]<div />
+        [17]<div />
+        [18]<button Everyone can reply/>
+        [19]<div />
+        [20]<div presentation/>
+        [21]<button Add photos or video/>
+        [22]<div presentation/>
+        [23]<button Add a GIF/>
+        [24]<div presentation/>
+        [25]<button Enhance your post with Grok/>
+        [26]<div presentation/>
+        [27]<button Add poll/>
+        [28]<div presentation/>
+        [29]<div />
+        [30]<button Add emoji/>
+        [31]<div presentation/>
+        [32]<button Schedule post/>
+        [33]<div presentation/>
+        [34]<button Tag location/>
+        [35]<div presentation/>
+        [36]<button Bold, (⌘+B)/>
+        [37]<div presentation/>
+        [38]<button Italic, (⌘+I)/>
+        [39]<button Post/>
+        [40]<div presentation/>
+        [41]<a tab>Startup Community/>
+        [42]<div presentation/>
+        [43]<a tab>Generative AI/>
+        [44]<div presentation/>
+        [45]<a tab>RAG and AI Agent Developers/>
+        [46]<div />
+        [47]<article />
+        [48]<div ·
+        Thinking about doing a space where I unblock everyone and we hash out what happened with
+        ,
+        ,
+        etc
+
+        We can put everything on the table, nothing off limits
+
+        Nothing to hide and frankly tired of the degens slinging conspiracy theories so let's just get it over with/>
+        [49]<a link/>
+        [50]<img />
+        [51]<div />
+        [52]<a link>Shaw/>
+        [53]<a link>@shawmakesmagic/>
+        [54]<a 22 hours ago;link>22h/>
+        [55]<button Grok actions/>
+        [56]<div />
+        [57]<button false;More/>
+        [58]<div />
+        [59]<a link>$eliza/>
+        [60]<a link>$matl/>
+        [61]<a link>$aicc/>
+        [62]<button 61 Replies. Reply>61/>
+        [63]<div />
+        [64]<button false;6 reposts. Repost>6/>
+        [65]<div />
+        [66]<button 207 Likes. Like>207/>
+        [67]<div />
+        [68]<a 27112 views. View post analytics;link>27K/>
+        [69]<div />
+        [70]<button Bookmark/>
+        [71]<div />
+        [72]<button false;Share post/>
+        [73]<div />
+        [74]<div />
+        [75]<article />
+        [76]<div ·
+        Boring banks and payments win by doing nothing fancy. Frictionless, simple — that's how Revolut wins./>
+        [77]<a link/>
+        [78]<img />
+        [79]<div />
+        [80]<a link>Sky Sanye/>
+        [81]<a link>@skyhan_eth/>
+        [82]<a link;7 hours ago>7h/>
+        [83]<button Grok actions/>
+        [84]<div />
+        [85]<button false;More/>
+        [86]<div />
+        [87]<div />
+        [88]<a link/>
+        [89]<img />
+        [90]<img />
+        [91]<div />
+        [92]<a link>sumon/>
+        [93]<a link>@sfursumon/>
+        [94]<button Follow @sfursumon>Follow/>
+        [95]<a link>Show more/>
+        [96]<a link>Terms of Service/>
+        [97]<a link>Privacy Policy/>
+        [98]<a link>Cookie Policy/>
+        [99]<button false>More/>
+        ... 10943 pixels below - scroll or extract content to see more ...
+
+ **Previous Actions** 
+Previous step: 1/100 
+Previous action 1/2: {"wait":{"seconds":2}}
+Result of previous action 1/2: 🕒  Waiting for 2 seconds
+Previous action 2/2: {"click_element":{"index":39}}
+Result of previous action 2/2: 🖱️  Clicked button with index 39: "
+      },
+      {
+        "type": "image_url"
+      }
+    ]
+  }
+]

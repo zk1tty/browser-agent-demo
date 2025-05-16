@@ -86,7 +86,7 @@ class CustomMessageManager(MessageManager):
             use_vision=True,
             history_summary: Optional[str] = None,
     ) -> None:
-        """Add browser state as human message"""
+        """Add browser state as human message. ex. debug/input_message.txt"""
         # otherwise add state message and result to next message (which will not stay in memory)
         state_message = self.settings.agent_prompt_class(
             state,
