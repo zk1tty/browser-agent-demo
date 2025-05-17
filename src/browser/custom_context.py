@@ -108,12 +108,12 @@ class CustomBrowserContext(BrowserContext):
                 timestamp = int(time.time())
                 # Ensure tracking_save_path exists (it should have been created in start_tracking)
                 os.makedirs(self.tracking_save_path, exist_ok=True)
-                filepath = os.path.join(self.tracking_save_path, f"input_trace_{timestamp}.json")
+                filepath = os.path.join(self.tracking_save_path, f"manual_record_{timestamp}.jsonl")
                 
-                json_data = self.input_tracker.export_events_to_json()
+                jsonl_data = self.input_tracker.export_events_to_jsonl()
                 try:
                     with open(filepath, 'w') as f:
-                        f.write(json_data)
+                        f.write(jsonl_data)
                     logger.info(f"Saved user input tracking to {filepath}")
                     return filepath
                 except IOError as e:
@@ -148,117 +148,45 @@ class CustomBrowserContext(BrowserContext):
         
     async def replay_input_events(self, events_file_path: str) -> bool:
         """
-        Replay recorded input events from a file.
+        Replay recorded input events from a file using TraceReplayer.
         
         Args:
-            events_file_path: Path to the events JSON file
+            events_file_path: Path to the events JSONL file
             
         Returns:
             bool: True if replay successful, False otherwise
         """
-        try:
-            # Load events from file
-            events, success = UserInputTracker.load_events_from_file(events_file_path)
-            if not success or not events:
-                logger.error(f"Failed to load events from {events_file_path}")
-                return False
-                
-            # Get the CDP client
-            if not self.pages:
-                logger.error("No pages available for event replay")
-                return False
-                
-            first_page = self.pages[0]
-            cdp_client = await first_page.context.new_cdp_session(first_page)
-            
-            # Process events in chronological order
-            events.sort(key=lambda event: event.timestamp)
-            
-            # Start replay
-            logger.info(f"Starting replay of {len(events)} events")
-            
-            # TODO: Event list is wrong. Need to update.
-            for i, event in enumerate(events):
-                if event.event_type == "navigation":
-                    # Handle navigation events
-                    if isinstance(event, NavigationEvent) and event.to_url:
-                        await first_page.page.goto(event.to_url)
-                        await asyncio.sleep(0.5)  # Small delay after navigation
-                        
-                elif event.event_type == "mouse_click":
-                    # Handle mouse click events
-                    if isinstance(event, MouseClickEvent):
-                        await cdp_client.send(
-                            "Input.dispatchMouseEvent",
-                            {
-                                "type": "mousePressed",
-                                "x": event.x,
-                                "y": event.y,
-                                "button": event.button,
-                                "clickCount": 1
-                            }
-                        )
-                        # Also send mouseReleased event
-                        await cdp_client.send(
-                            "Input.dispatchMouseEvent",
-                            {
-                                "type": "mouseReleased",
-                                "x": event.x,
-                                "y": event.y,
-                                "button": event.button,
-                                "clickCount": 1
-                            }
-                        )
-                        
-                elif event.event_type == "keyboard_input":
-                    # Handle keyboard events
-                    if isinstance(event, KeyboardEvent) and hasattr(event, 'key') and hasattr(event, 'code'):
-                        modifiers_val = 0 # Renamed to avoid conflict with event.modifiers
-                        if "alt" in event.modifiers:
-                            modifiers_val |= 1
-                        if "ctrl" in event.modifiers: # CDP uses 'control' but JS send 'ctrl' - mapping handled in tracker
-                            modifiers_val |= 2
-                        if "meta" in event.modifiers:
-                            modifiers_val |= 4
-                        if "shift" in event.modifiers:
-                            modifiers_val |= 8
-                            
-                        # Send keyDown event
-                        await cdp_client.send(
-                            "Input.dispatchKeyEvent",
-                            {
-                                "type": "keyDown",
-                                "key": event.key, # The actual key string (e.g., 'a', 'Enter')
-                                "code": event.code, # The physical key code (e.g., 'KeyA', 'Enter')
-                                "modifiers": modifiers_val,
-                                "text": event.key if len(event.key) == 1 else "" # Use event.key for single characters as text
-                            }
-                        )
-                        
-                        # Send keyUp event
-                        await cdp_client.send(
-                            "Input.dispatchKeyEvent",
-                            {
-                                "type": "keyUp",
-                                "key": event.key,
-                                "code": event.code,
-                                "modifiers": modifiers_val
-                                # text is not usually sent for keyUp
-                            }
-                        )
-                
-                # Small delay between events to simulate real timing
-                if i < len(events) - 1:
-                    next_timestamp = events[i+1].timestamp
-                    delay = next_timestamp - event.timestamp
-                    if delay > 0 and delay < 5:  # Cap delay at 5 seconds
-                        await asyncio.sleep(delay)
-                    else:
-                        await asyncio.sleep(0.1)  # Default small delay
-            
-            logger.info("Event replay completed")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error during event replay: {str(e)}")
+        logger.info(f"Attempting to replay trace file: {events_file_path}")
+        if not self.pages:
+            logger.error("No pages available for event replay. Cannot proceed.")
             return False
+        
+        first_page = self.pages[0] # Use the first available page for replay
+        
+        # Ensure browser and page are valid for TraceReplayer
+        # self.browser is the CustomBrowser instance
+        # CustomBrowser has .playwright_browser which TraceReplayer might expect as Browser type
+        # However, TraceReplayer is typed to take browser_use.browser.browser.Browser
+        # Let's assume self.browser (CustomBrowser) is compatible or TraceReplayer handles it.
+        
+        try:
+            from src.utils.replayer import TraceReplayer # Local import to avoid circular dependency issues
+            
+            # CustomBrowser (self.browser) should be passed. 
+            # TraceReplayer expects browser_use.browser.browser.Browser.
+            # CustomBrowser is a subclass, so this should be acceptable.
+            replayer = TraceReplayer(browser=self.browser, page=first_page)
+            await replayer.play(path=events_file_path)
+            logger.info(f"Successfully replayed trace file: {events_file_path}")
+            return True
+        except FileNotFoundError:
+            logger.error(f"Trace file not found for replay: {events_file_path}")
+            return False
+        except Exception as e:
+            import traceback
+            logger.error(f"Error during event replay of {events_file_path}: {str(e)}\n{traceback.format_exc()}")
+            return False
+
+# Example of how config might be used for this context if passed directly
+# config = BrowserContextConfig(save_input_tracking_path="./my_traces")
+# context = CustomBrowserContext(browser_instance, config=config)
