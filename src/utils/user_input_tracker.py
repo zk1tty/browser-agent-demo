@@ -2,404 +2,227 @@ import json
 import time
 import logging
 import asyncio
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Dict, List, Any, Optional, Tuple, Callable
 from dataclasses import dataclass, asdict, field
 
 logger = logging.getLogger(__name__)
 
+# =====================
+# Dataclass definitions
+# =====================
+
 @dataclass
 class InputEvent:
-    """Base class for all user input events"""
     timestamp: float
     url: str
     event_type: str
-    
+
 @dataclass
 class MouseClickEvent(InputEvent):
-    """Event representing a mouse click"""
     x: int
     y: int
     button: str
-    element_selector: Optional[str] = None
-    element_text: Optional[str] = None
-    
+    modifiers: List[str] = field(default_factory=list)
+
 @dataclass
 class KeyboardEvent(InputEvent):
-    """Event representing keyboard input"""
     key: str
+    code: str
     modifiers: List[str] = field(default_factory=list)
-    text: Optional[str] = None
-    
+
 @dataclass
 class NavigationEvent(InputEvent):
-    """Event representing a navigation action"""
     from_url: Optional[str] = None
     to_url: str = ""
-    
-@dataclass
-class ElementSelectionEvent(InputEvent):
-    """Event representing an element selection/focus"""
-    element_selector: str
-    element_text: Optional[str] = None
+
+# =========================================================
+# Main tracker class
+# =========================================================
 
 class UserInputTracker:
+    """Tracks mouse, keyboard, and navigation events via Playwright + CDP."""
+
+    # one canonical binding name used in JS <-> Python bridge
+    BINDING = "__uit_relay"
+
+    # JS snippet; doubled braces survive str.format.
+    _JS_TEMPLATE = """
+    (function() {{
+        const binding = "{binding}";
+        const send = (type, e) => {{
+            // dev‑time feedback in DevTools
+            console.log('[UIT]', type, e.key ?? e.button, e.clientX ?? '', e.clientY ?? '');
+            if (window[binding]) {{
+                console.log('[UIT] calling python binding', binding);
+                window[binding]({{
+                    type,
+                    ts: Date.now(),
+                    url: location.href,
+                    x:  e.clientX ?? null,
+                    y:  e.clientY ?? null,
+                    button: e.button ?? null,
+                    key:    e.key    ?? null,
+                    code:   e.code   ?? null,
+                    alt:  e.altKey,
+                    ctrl: e.ctrlKey,
+                    shift:e.shiftKey,
+                    meta: e.metaKey
+                }});
+            }} else {{
+                console.warn('[UIT] binding', binding, 'missing on window');
+            }}
+        }};
+        document.addEventListener('mousedown', e => send('mousedown', e), true);
+        document.addEventListener('keydown',   e => send('keydown',   e), true);
+        console.log('[UIT] listeners ready');
+    }})();
     """
-    Class to track and record user input events through Chrome DevTools Protocol.
-    
-    This tracker captures mouse clicks, keyboard inputs, navigation events, and
-    element selections during a browser session. It uses CDP to register event
-    listeners and stores events in a structured format.
-    """
-    
-    def __init__(self, cdp_client=None):
-        """
-        Initialize the tracker with a CDP client.
-        
-        Args:
-            cdp_client: Chrome DevTools Protocol client instance
-        """
+
+    def __init__(self, *, cdp_client: Optional[Any] = None, page: Optional[Any] = None):
         self.cdp_client = cdp_client
+        self.page = page
         self.events: List[InputEvent] = []
+        self._cleanup: List[Callable[[], None]] = []
         self.is_recording = False
         self.current_url = ""
-        self._event_listeners = []
-        
-    async def start_tracking(self, cdp_client=None):
-        """
-        Start tracking user input events.
-        
-        Args:
-            cdp_client: Optional CDP client to use instead of the one provided at init
-        """
+
+    # --------------------------------------------------
+    # Public API
+    # --------------------------------------------------
+
+    async def start_tracking(self, *, cdp_client: Optional[Any] = None, page: Optional[Any] = None) -> bool:
         if cdp_client:
             self.cdp_client = cdp_client
-            
-        if not self.cdp_client:
-            logger.error("Cannot start tracking: No CDP client provided")
+        if page:
+            self.page = page
+        if not (self.cdp_client and self.page):
+            logger.error("UserInputTracker requires CDP client and Playwright page")
             return False
-            
         if self.is_recording:
-            logger.warning("Tracking is already active")
             return True
-            
         try:
-            # Register CDP event listeners
-            await self._register_event_listeners()
+            await self._register()
+            await self.page.bring_to_front()  # ensure focus for key events
             self.is_recording = True
-            self.events = []
-            logger.info("User input tracking started")
+            self.current_url = self.page.url
+            logger.info("User‑input tracking started")
             return True
-        except Exception as e:
-            logger.error(f"Failed to start tracking: {str(e)}")
+        except Exception:
+            logger.exception("Failed to start tracking")
+            await self._unregister()
             return False
-            
+
     async def stop_tracking(self):
-        """Stop tracking user input events and unregister CDP listeners."""
         if not self.is_recording:
-            logger.warning("Tracking is not active")
             return
-            
-        try:
-            # Unregister CDP event listeners
-            await self._unregister_event_listeners()
-            self.is_recording = False
-            logger.info("User input tracking stopped")
-        except Exception as e:
-            logger.error(f"Failed to stop tracking: {str(e)}")
-            
-    async def _register_event_listeners(self):
-        """Register event listeners with the CDP client."""
-        if not self.cdp_client:
-            return
-            
-        # Set up event listeners for different input types
-        # For mouse events
-        self._event_listeners.append(
-            await self.cdp_client.session.subscribe(
-                "Page.domContentEventFired", self._handle_page_event
-            )
-        )
-        
-        # For mouse clicks
-        self._event_listeners.append(
-            await self.cdp_client.session.subscribe(
-                "Input.mousePressed", self._handle_mouse_click
-            )
-        )
-        
-        # For keyboard input
-        self._event_listeners.append(
-            await self.cdp_client.session.subscribe(
-                "Input.keyDown", self._handle_key_down
-            )
-        )
-        
-        # For navigation
-        self._event_listeners.append(
-            await self.cdp_client.session.subscribe(
-                "Page.frameNavigated", self._handle_navigation
-            )
-        )
-        
-    async def _unregister_event_listeners(self):
-        """Unregister all CDP event listeners."""
-        for listener in self._event_listeners:
+        await self._unregister()
+        self.is_recording = False
+        logger.info("User‑input tracking stopped")
+
+    # --------------------------------------------------
+    # Internal registration / teardown
+    # --------------------------------------------------
+
+    async def _register(self):
+        # 1. enable Page domain for navigation events
+        await self.cdp_client.send("Page.enable")
+        self.cdp_client.on("Page.frameNavigated", self._on_cdp_navigation)
+        self._cleanup.append(lambda: self.cdp_client.off("Page.frameNavigated", self._on_cdp_navigation))
+
+        # 2. expose python binding first
+        await self.page.expose_binding(self.BINDING, self._on_dom_event)
+
+        # 3. build & persist init script (future navs)
+        script = self._JS_TEMPLATE.format(binding=self.BINDING)
+        await self.page.add_init_script(script)
+
+        # 4. run now in current frames
+        await self._eval_in_all_frames(script)
+
+        # 5. keep new / navigated frames covered
+        self.page.on("frameattached",  lambda f: asyncio.create_task(self._safe_eval(f, script)))
+        self.page.on("framenavigated", lambda f: asyncio.create_task(self._safe_eval(f, script)))
+        self._cleanup.append(lambda: self.page.off("frameattached", None))
+        self._cleanup.append(lambda: self.page.off("framenavigated", None))
+
+    async def _unregister(self):
+        for fn in self._cleanup:
             try:
-                await listener.dispose()
-            except Exception as e:
-                logger.error(f"Failed to unregister event listener: {str(e)}")
-                
-        self._event_listeners = []
-        
-    async def _handle_page_event(self, event):
-        """Handle page content events to update current URL."""
+                fn()
+            except Exception:
+                pass
+        self._cleanup.clear()
+
+    # --------------------------------------------------
+    # Helpers for frame eval
+    # --------------------------------------------------
+
+    async def _eval_in_all_frames(self, script: str):
+        await self._safe_eval(self.page.main_frame, script)
+        for fr in self.page.frames:
+            await self._safe_eval(fr, script)
+
+    async def _safe_eval(self, frame, script: str):
         try:
-            # Get current URL
-            result = await self.cdp_client.send("Page.getNavigationHistory")
-            current_entry = result["entries"][result["currentIndex"]]
-            self.current_url = current_entry["url"]
-        except Exception as e:
-            logger.error(f"Failed to process page event: {str(e)}")
-            
-    async def _handle_mouse_click(self, event):
-        """Handle mouse click events from CDP."""
+            await frame.evaluate(script)
+        except Exception:
+            pass  # cross‑origin or sandboxed frames may refuse
+
+    # --------------------------------------------------
+    # Bridge: JS → Python
+    # --------------------------------------------------
+
+    async def _on_dom_event(self, _source, p: Dict[str, Any]):
         if not self.is_recording:
             return
-            
         try:
-            # Get coordinates from the event
-            x = event.get("x", 0)
-            y = event.get("y", 0)
-            button = event.get("button", "left")
-            
-            # Try to identify the element at this position
-            element_info = await self._get_element_at_position(x, y)
-            
-            click_event = MouseClickEvent(
-                timestamp=time.time(),
-                url=self.current_url,
-                event_type="mouse_click",
-                x=x,
-                y=y,
-                button=button,
-                element_selector=element_info.get("selector"),
-                element_text=element_info.get("text")
-            )
-            
-            self.events.append(click_event)
-            logger.debug(f"Recorded mouse click: {click_event}")
-        except Exception as e:
-            logger.error(f"Failed to process mouse click: {str(e)}")
-            
-    async def _handle_key_down(self, event):
-        """Handle keyboard events from CDP."""
-        if not self.is_recording:
-            return
-            
-        try:
-            key = event.get("key", "")
-            modifiers = []
-            
-            if event.get("alt"):
-                modifiers.append("alt")
-            if event.get("shift"):
-                modifiers.append("shift")
-            if event.get("ctrl"):
-                modifiers.append("ctrl")
-            if event.get("meta"):
-                modifiers.append("meta")
-                
-            # For printable characters
-            text = event.get("text", None)
-            
-            key_event = KeyboardEvent(
-                timestamp=time.time(),
-                url=self.current_url,
-                event_type="keyboard_input",
-                key=key,
-                modifiers=modifiers,
-                text=text
-            )
-            
-            self.events.append(key_event)
-            logger.debug(f"Recorded key event: {key_event}")
-        except Exception as e:
-            logger.error(f"Failed to process keyboard event: {str(e)}")
-            
-    async def _handle_navigation(self, event):
-        """Handle navigation events from CDP."""
-        if not self.is_recording:
-            return
-            
-        try:
-            frame = event.get("frame", {})
-            url = frame.get("url", "")
-            
-            if not url or url == self.current_url:
+            ts = p.get("ts", time.time()*1000)/1000.0
+            url = p.get("url", self.current_url)
+            mods = [m for m, f in (("alt",p.get("alt")), ("ctrl",p.get("ctrl")), ("shift",p.get("shift")), ("meta",p.get("meta"))) if f]
+            typ = p.get("type")
+            if typ == "mousedown":
+                btn_map = {0:"left", 1:"middle", 2:"right"}
+                button  = btn_map.get(p.get("button"), "unknown")
+                evt = MouseClickEvent(ts, url, "mouse_click", int(p.get("x",0)), int(p.get("y",0)), button, mods)
+            elif typ == "keydown":
+                evt = KeyboardEvent(ts, url, "keyboard_input", str(p.get("key")), str(p.get("code")), mods)
+            else:
                 return
-                
-            nav_event = NavigationEvent(
-                timestamp=time.time(),
-                url=url,
-                event_type="navigation",
-                from_url=self.current_url,
-                to_url=url
-            )
-            
+            self.events.append(evt)
+            logger.info("🟢 Python binding hit – recorded %s", evt)
+        except Exception:
+            logger.exception("Malformed DOM payload: %s", p)
+
+    # --------------------------------------------------
+    # CDP navigation handler
+    # --------------------------------------------------
+
+    def _on_cdp_navigation(self, ev: Dict[str, Any]):
+        if not self.is_recording:
+            return
+        url = ev.get("frame", {}).get("url")
+        if url and url not in (self.current_url, "about:blank"):
+            nav = NavigationEvent(time.time(), url, "navigation", self.current_url, url)
+            self.events.append(nav)
             self.current_url = url
-            self.events.append(nav_event)
-            logger.debug(f"Recorded navigation: {nav_event}")
-        except Exception as e:
-            logger.error(f"Failed to process navigation event: {str(e)}")
-            
-    async def _get_element_at_position(self, x, y) -> Dict[str, Any]:
-        """
-        Get information about the element at the specified position.
-        
-        Args:
-            x: X coordinate
-            y: Y coordinate
-            
-        Returns:
-            Dictionary with element information (selector, text)
-        """
-        try:
-            if not self.cdp_client:
-                return {}
-                
-            # Use CDP to get the element at the position
-            node_id_result = await self.cdp_client.send(
-                "DOM.getNodeForLocation", {"x": x, "y": y}
-            )
-            
-            if not node_id_result or "nodeId" not in node_id_result:
-                return {}
-                
-            node_id = node_id_result["nodeId"]
-            
-            # Get element details
-            element_result = await self.cdp_client.send(
-                "DOM.describeNode", {"nodeId": node_id}
-            )
-            
-            if not element_result or "node" not in element_result:
-                return {}
-                
-            node = element_result["node"]
-            
-            # Try to get a CSS selector for this element
-            selector_result = await self.cdp_client.send(
-                "DOM.querySelector", 
-                {"nodeId": node_id, "selector": "*"}
-            )
-            
-            # Get the HTML content of the element
-            html_result = await self.cdp_client.send(
-                "DOM.getOuterHTML", {"nodeId": node_id}
-            )
-            
-            # Extract text content
-            text_content = node.get("nodeValue", "")
-            if not text_content and "outerHTML" in html_result:
-                # Simple text extraction - in a real implementation, 
-                # you might want to use a more robust method
-                text_content = html_result["outerHTML"]
-                # Strip HTML tags for a simple text representation
-                # This is a very basic approach
-                text_content = text_content.replace("<", " <").replace(">", "> ")
-                
-            return {
-                "selector": f"#{node.get('attributes', {}).get('id', '')} " 
-                            f".{node.get('attributes', {}).get('class', '')}",
-                "text": text_content[:100] if text_content else None  # Limit length
-            }
-        except Exception as e:
-            logger.error(f"Failed to get element at position: {str(e)}")
-            return {}
-            
-    def get_events(self) -> List[InputEvent]:
-        """
-        Get all recorded events.
-        
-        Returns:
-            List of InputEvent objects
-        """
-        return self.events
-        
+
+    # --------------------------------------------------
+    # Export helpers
+    # --------------------------------------------------
+
     def export_events_to_json(self) -> str:
-        """
-        Export all recorded events to a JSON string.
-        
-        Returns:
-            JSON string representation of all events
-        """
-        event_dicts = [asdict(event) for event in self.events]
         return json.dumps({
-            "version": "1.0",
+            "version": "1.5",
             "timestamp": time.time(),
-            "events": event_dicts
+            "events": [asdict(e) for e in self.events],
         }, indent=2)
-        
-    def save_events_to_file(self, filepath: str) -> bool:
-        """
-        Save all recorded events to a file.
-        
-        Args:
-            filepath: Path to save the events JSON file
-            
-        Returns:
-            True if successful, False otherwise
-        """
-        try:
-            json_data = self.export_events_to_json()
-            with open(filepath, 'w') as f:
-                f.write(json_data)
-            logger.info(f"Saved input events to {filepath}")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to save events to file: {str(e)}")
-            return False
-            
-    @classmethod
-    def load_events_from_file(cls, filepath: str) -> Tuple[List[InputEvent], bool]:
-        """
-        Load events from a file.
-        
-        Args:
-            filepath: Path to the events JSON file
-            
-        Returns:
-            Tuple of (events list, success boolean)
-        """
-        events = []
-        try:
-            with open(filepath, 'r') as f:
-                data = json.load(f)
-                
-            if "events" not in data:
-                logger.error("Invalid event file format: missing 'events' key")
-                return [], False
-                
-            for event_dict in data["events"]:
-                event_type = event_dict.get("event_type")
-                
-                if event_type == "mouse_click":
-                    event = MouseClickEvent(**event_dict)
-                elif event_type == "keyboard_input":
-                    event = KeyboardEvent(**event_dict)
-                elif event_type == "navigation":
-                    event = NavigationEvent(**event_dict)
-                elif event_type == "element_selection":
-                    event = ElementSelectionEvent(**event_dict)
-                else:
-                    # Default to base class if type not recognized
-                    event = InputEvent(**{k: v for k, v in event_dict.items() 
-                                         if k in ["timestamp", "url", "event_type"]})
-                    
-                events.append(event)
-                
-            logger.info(f"Loaded {len(events)} events from {filepath}")
-            return events, True
-        except Exception as e:
-            logger.error(f"Failed to load events from file: {str(e)}")
-            return [], False
+
+    # --------------------------------------------------
+    # Synchronous wrappers (optional)
+    # --------------------------------------------------
+
+    def start_sync(self, **kw):
+        return asyncio.get_event_loop().run_until_complete(self.start_tracking(**kw))
+
+    def stop_sync(self):
+        return asyncio.get_event_loop().run_until_complete(self.stop_tracking())
