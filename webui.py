@@ -1486,46 +1486,8 @@ def create_ui(theme_name="Citrus"):
                     outputs=[config_status]
                 )
 
-            # ✨ NEW – Repeat tab for uploading & replaying history
-            with gr.TabItem("🔁 Rebrowse", id=9):
-                history_file_input = gr.File(
-                    label="Browsing History (JSON)",
-                    file_types=[".json"],
-                    interactive=True
-                )
-                repeat_max_steps = gr.Number(
-                    label="Max Steps to Replay",
-                    value=50,
-                    precision=0,
-                    interactive=True
-                )
-                run_repeat_btn = gr.Button("▶️ Run Repeat", variant="primary", scale=2)
-                stop_repeat_btn = gr.Button("⏹ Stop", variant="stop", scale=1)
-
-                repeat_result = gr.Textbox(label="Result / Log", lines=4)
-                repeat_errors = gr.Textbox(label="Errors", lines=4)
-
-                run_repeat_btn.click(
-                    fn=run_repeat,
-                    inputs=[
-                        history_file_input, repeat_max_steps,
-                        llm_provider, llm_model_name, ollama_num_ctx,
-                        llm_temperature, llm_base_url, llm_api_key,
-                        use_own_browser, keep_browser_open, headless, disable_security,
-                        window_w, window_h, save_recording_path, save_agent_history_path,
-                        save_trace_path, enable_recording, chrome_cdp, use_vision,
-                        max_actions_per_step, tool_calling_method, max_input_tokens
-                    ],
-                    outputs=[repeat_result, repeat_errors]
-                )
-                stop_repeat_btn.click(
-                    fn=stop_agent,
-                    inputs=[],
-                    outputs=[stop_repeat_btn, run_repeat_btn]
-                )
-                
             # New: Record tab
-            with gr.TabItem("🛑 Record", id=10):
+            with gr.TabItem("🛑 Record", id=9):
                 
                 gr.Markdown("### 🛑 Record User Input")
                 with gr.Row():
