@@ -42,17 +42,19 @@ from src.utils import utils
 from src.agent.custom_agent import CustomAgent
 from src.browser.custom_browser import CustomBrowser
 from src.agent.custom_prompts import CustomSystemPrompt, CustomAgentMessagePrompt
-from src.browser.custom_context import BrowserContextConfig, CustomBrowserContext
+from src.browser.custom_context import CustomBrowserContext
 from src.controller.custom_controller import CustomController
 from gradio.themes import Citrus, Default, Glass, Monochrome, Ocean, Origin, Soft, Base
 from src.utils.utils import update_model_dropdown, get_latest_files, capture_screenshot, MissingAPIKeyError
 from src.utils import utils
-from src.browser.custom_context_config import CustomBrowserContextConfig
+from src.browser.custom_context_config import CustomBrowserContextConfig as AppCustomBrowserContextConfig
+from browser_use.browser.context import BrowserContextConfig
 from pathlib import Path
+from typing import Optional, Union
 
 # Global variables for persistence
-_global_browser = None
-_global_browser_context = None
+_global_browser: Optional[CustomBrowser] = None
+_global_browser_context: Optional[CustomBrowserContext] = None
 _global_agent = None
 _global_input_tracking_active = False
 
@@ -392,7 +394,8 @@ async def run_org_agent(
             chrome_path = None
 
         if _global_browser is None:
-            _global_browser = Browser(
+            logger.info("Global browser (CustomBrowser) not found for org agent, initializing...")
+            _global_browser = CustomBrowser(
                 config=BrowserConfig(
                     headless=headless,
                     cdp_url=cdp_url,
@@ -401,21 +404,33 @@ async def run_org_agent(
                     extra_chromium_args=extra_chromium_args,
                 )
             )
+            await _global_browser.async_init()
+        elif not (_global_browser.playwright_browser and _global_browser.playwright_browser.is_connected()):
+            logger.info("Global CustomBrowser found but not connected for org agent. Re-initializing...")
+            await _global_browser.async_init()
 
         if _global_browser_context is None:
-            # Use CustomBrowserContextConfig to support input tracking
-            _global_browser_context = await _global_browser.new_context(
-                config=CustomBrowserContextConfig(
-                    trace_path=save_trace_path if save_trace_path else None,
-                    save_recording_path=save_recording_path if save_recording_path else None,
-                    no_viewport=False,
-                    browser_window_size=BrowserContextWindowSize(
-                        width=window_w, height=window_h
-                    ),
-                    enable_input_tracking=enable_input_tracking,
-                    save_input_tracking_path=save_input_tracking_path
-                )
+            logger.info("Global browser context not found for org agent run, initializing...")
+            # _global_browser is now guaranteed to be CustomBrowser (or init failed before this)
+            context_config = AppCustomBrowserContextConfig(
+                trace_path=save_trace_path if save_trace_path else None,
+                save_recording_path=save_recording_path if save_recording_path else None,
+                no_viewport=False,
+                browser_window_size=BrowserContextWindowSize(
+                    width=window_w, height=window_h
+                ),
+                enable_input_tracking=enable_input_tracking, 
+                save_input_tracking_path=save_input_tracking_path
             )
+            _global_browser_context = await _global_browser.new_context(config=context_config)
+        
+        # If agent's own input tracking is enabled and no pages exist, open one.
+        if (enable_input_tracking and 
+            isinstance(_global_browser_context, CustomBrowserContext) and 
+            _global_browser_context.playwright_context is not None and # Explicitly check playwright_context for None
+            not _global_browser_context.playwright_context.pages):
+            logger.info("Agent run has input tracking enabled and no pages exist. Opening a new default page.")
+            await _global_browser_context.playwright_context.new_page()
 
         if _global_agent is None:
             _global_agent = Agent(
@@ -509,6 +524,7 @@ async def run_custom_agent(
 
         # Initialize global browser if needed
         if _global_browser is None:
+            logger.info("Global browser (CustomBrowser) not found, initializing for custom agent...")
             _global_browser = CustomBrowser(
                 config=BrowserConfig(
                     headless=headless,
@@ -518,24 +534,37 @@ async def run_custom_agent(
                     extra_chromium_args=extra_chromium_args,
                 )
             )
-            await _global_browser.async_init()  # Initialize the Playwright browser
+            await _global_browser.async_init() 
+        elif not (_global_browser.playwright_browser and _global_browser.playwright_browser.is_connected()):
+            logger.info("Global CustomBrowser found but not connected for custom agent. Re-initializing...")
+            await _global_browser.async_init()
+        # No need to check if it's base Browser, as it's now always initialized as CustomBrowser if None
 
         if _global_browser_context is None:
-            # Use CustomBrowserContextConfig to support input tracking
+            logger.info("Global browser context not found for custom agent run, initializing...")
+            # _global_browser is now guaranteed to be CustomBrowser
             _global_browser_context = await _global_browser.new_context(
-                config=CustomBrowserContextConfig(
+                config=AppCustomBrowserContextConfig( 
                     trace_path=save_trace_path if save_trace_path else None,
                     save_recording_path=save_recording_path if save_recording_path else None,
                     no_viewport=False,
                     browser_window_size=BrowserContextWindowSize(
                         width=window_w, height=window_h
                     ),
-                    enable_input_tracking=enable_input_tracking,
+                    enable_input_tracking=enable_input_tracking, 
                     save_input_tracking_path=save_input_tracking_path
                 )
             )
+        
+        # If agent's own input tracking is enabled and no pages exist, open one.
+        if (enable_input_tracking and 
+            isinstance(_global_browser_context, CustomBrowserContext) and 
+            _global_browser_context.playwright_context is not None and # Explicitly check playwright_context for None
+            not _global_browser_context.playwright_context.pages):
+            logger.info("Agent run has input tracking enabled and no pages exist. Opening a new default page.")
+            await _global_browser_context.playwright_context.new_page()
 
-        # Update the browser context reference in user_input_functions
+        # Set the context for user_input_functions
         user_input_functions.set_browser_context(_global_browser_context)
 
         controller = CustomController()
@@ -905,34 +934,99 @@ async def run_repeat(
 async def start_input_tracking_with_context():
     global _global_browser, _global_browser_context
 
-    # Ensure browser exists
     if _global_browser is None:
+        logger.info("Global browser (CustomBrowser) not found for Record Tab, initializing...")
         _global_browser = CustomBrowser(
             config=BrowserConfig(
-                headless=False,
-                disable_security=True,
-                cdp_url="http://localhost:9222",  # Adjust as needed
-                chrome_instance_path=None,        # Adjust as needed
+                headless=False, 
+                disable_security=True, 
+                cdp_url=os.getenv("CHROME_CDP", "http://localhost:9222"), 
+                chrome_instance_path=os.getenv("CHROME_PATH", None),
                 extra_chromium_args=[]
             )
         )
-        await _global_browser.async_init()  # Initialize the Playwright browser
+        await _global_browser.async_init()
+    # _global_browser is CustomBrowser, so it has playwright_browser and async_init
+    elif not (_global_browser.playwright_browser and _global_browser.playwright_browser.is_connected()):
+        logger.info("Global CustomBrowser found but not connected. Re-initializing for Record Tab...")
+        await _global_browser.async_init()
 
-    # Ensure context exists
+    should_create_new_context = False
     if _global_browser_context is None:
+        should_create_new_context = True
+    # _global_browser_context is CustomBrowserContext, so it has playwright_context
+    elif not _global_browser_context.playwright_context or not _global_browser_context.playwright_context.pages:
+        logger.info("Existing global browser context has no pages or seems invalid; will create a new one for recording.")
+        should_create_new_context = True 
+    elif _global_browser_context.playwright_context and _global_browser_context.playwright_context._connection.is_closed():
+            logger.info("Existing global browser context's connection is closed; will create a new one for recording.")
+            should_create_new_context = True
+
+    if should_create_new_context:
+        logger.info("Initializing new browser context for input tracking.")
+        # _global_browser is CustomBrowser, its new_context returns CustomBrowserContext
         _global_browser_context = await _global_browser.new_context(
-            config=CustomBrowserContextConfig(
-                enable_input_tracking=True,
+            config=AppCustomBrowserContextConfig(
+                enable_input_tracking=True, 
                 save_input_tracking_path="./tmp/input_tracking",
                 browser_window_size=BrowserContextWindowSize(width=1280, height=1100)
             )
         )
+        # _global_browser_context is CustomBrowserContext, so it has playwright_context
+        if _global_browser_context and _global_browser_context.playwright_context:
+            logger.info("New browser context created for recording. Opening a new page in it.")
+            try:
+                page = await _global_browser_context.playwright_context.new_page()
+                await page.bring_to_front()
+                await page.goto("https://www.google.com")
+                logger.warning(f"Record Tab: A new browser context and page ('{page.url}') have been created, navigated to Google, and focused. Please use THIS page for recording.")
+            except Exception as e:
+                logger.error(f"Error opening, navigating, or focusing new page for recording: {e}")
+        else:
+            logger.error("Failed to create a new browser context properly for recording.")
+            return "Status: Error - No valid browser context (check logs)", gr.update(interactive=True), None
+    
+    # DEBUGGING: Print ID of CustomBrowserContext class object used here for isinstance check
+    from src.browser.custom_context import CustomBrowserContext as CBC_in_WebUI # Alias for clarity
+    print(f"DEBUG_CHECK: ID of CustomBrowserContext class in webui.py: {id(CBC_in_WebUI)}")
 
-    # Set the context for user_input_functions
-    user_input_functions.set_browser_context(_global_browser_context)
-
-    # Now start input tracking
-    return await user_input_functions.start_input_tracking()
+    if _global_browser_context:
+        print(f"DEBUG_CHECK: _global_browser_context actual type: {type(_global_browser_context)}, ID of its type: {id(type(_global_browser_context))}")
+    else:
+        print("DEBUG_CHECK: _global_browser_context is None before isinstance check.")
+    
+    # The isinstance check below should now reliably pass if _global_browser_context is not None
+    # because it's always created as CustomBrowserContext, and webui.py imports CustomBrowserContext correctly.
+    if not isinstance(_global_browser_context, CBC_in_WebUI): # Use aliased import for the check
+        logger.error(f"Failed to obtain a valid CustomBrowserContext. Cannot start input tracking. _global_browser_context is of type: {type(_global_browser_context)}")
+        return "Status: Error - No valid browser context (check logs)", gr.update(interactive=True), None
+    
+    if _global_browser_context:
+        print(f"DEBUG: _global_browser_context actual type: {type(_global_browser_context)}, module: {type(_global_browser_context).__module__}, id: {id(type(_global_browser_context))}")
+    else:
+        print("DEBUG: _global_browser_context is None before isinstance check.")
+    print(f"DEBUG: CustomBrowserContext type in webui: {CustomBrowserContext}, module: {CustomBrowserContext.__module__}, id: {id(CustomBrowserContext)}")
+    
+    if isinstance(_global_browser_context, CustomBrowserContext):
+        logger.info("Proceeding with input tracking as _global_browser_context is a CustomBrowserContext.")
+        if not _global_browser_context.pages:
+            logger.error("The CustomBrowserContext has no pages. Cannot start tracking. Please ensure a page is open in the target context.")
+            return "Status: Error - Context has no pages", gr.update(interactive=True), None
+        else:
+            success = await _global_browser_context.start_user_input_tracking()
+            if success:
+                logger.info("Successfully started user input tracking via CustomBrowserContext.")
+                return "Status: Recording... (Events will appear below)", gr.update(interactive=True), None
+            else:
+                logger.error("CustomBrowserContext failed to start user input tracking (see browser logs).")
+                return "Status: Error starting tracking (check logs)", gr.update(interactive=True), None
+    else:
+        # This block is effectively duplicated by the check at the beginning of the function now.
+        # However, keeping the original structure with the new return style.
+        logger.error(f"Failed to obtain a valid CustomBrowserContext. Cannot start input tracking. _global_browser_context is of type: {type(_global_browser_context)}")
+        return "Status: Error - No valid browser context (check logs)", gr.update(interactive=True), None
+    
+    # update_tracking_ui_elements() # REMOVED
 
 def create_ui(theme_name="Citrus"):
     css = """
