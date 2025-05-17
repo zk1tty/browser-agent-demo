@@ -42,15 +42,12 @@ class NavigationEvent(InputEvent):
 class UserInputTracker:
     """Tracks mouse, keyboard, and navigation events via Playwright + CDP."""
 
-    # one canonical binding name used in JS <-> Python bridge
     BINDING = "__uit_relay"
 
-    # JS snippet; doubled braces survive str.format.
     _JS_TEMPLATE = """
     (function() {{
-        const binding = "{binding}";
+        const binding = \"{binding}\";
         const send = (type, e) => {{
-            // dev‑time feedback in DevTools
             console.log('[UIT]', type, e.key ?? e.button, e.clientX ?? '', e.clientY ?? '');
             if (window[binding]) {{
                 console.log('[UIT] calling python binding', binding);
@@ -68,8 +65,6 @@ class UserInputTracker:
                     shift:e.shiftKey,
                     meta: e.metaKey
                 }});
-            }} else {{
-                console.warn('[UIT] binding', binding, 'missing on window');
             }}
         }};
         document.addEventListener('mousedown', e => send('mousedown', e), true);
@@ -78,98 +73,77 @@ class UserInputTracker:
     }})();
     """
 
-    def __init__(self, *, cdp_client: Optional[Any] = None, page: Optional[Any] = None):
-        self.cdp_client = cdp_client
+    def __init__(self, *, context: Optional[Any] = None, page: Optional[Any] = None, cdp_client: Optional[Any] = None):
+        """Init with a Playwright BrowserContext and an initial Page."""
+        # accept both `context` and (legacy) `cdp_client` for backward compatibility
+        if context is None and cdp_client is not None:
+            # legacy call pattern: tracker(context=..., page=..., cdp_client=ctx)
+            context = cdp_client  # treat provided CDP client as BrowserContext
+        self.context = context
         self.page = page
         self.events: List[InputEvent] = []
-        self._cleanup: List[Callable[[], None]] = []
         self.is_recording = False
-        self.current_url = ""
+        self.current_url: str = ""
+        self._cleanup: List[Callable[[], None]] = []
+        # we keep one compiled script ready
+        self._script_source = self._JS_TEMPLATE.format(binding=self.BINDING)
 
     # --------------------------------------------------
     # Public API
     # --------------------------------------------------
 
-    async def start_tracking(self, *, cdp_client: Optional[Any] = None, page: Optional[Any] = None) -> bool:
-        if cdp_client:
-            self.cdp_client = cdp_client
-        if page:
-            self.page = page
-        if not (self.cdp_client and self.page):
-            logger.error("UserInputTracker requires CDP client and Playwright page")
-            return False
+    async def start_tracking(self):
         if self.is_recording:
             return True
         try:
-            await self._register()
-            await self.page.bring_to_front()  # ensure focus for key events
+            await self._setup_page(self.page)            # existing page
+            self.context.on("page", lambda p: asyncio.create_task(self._setup_page(p)))
+            self._cleanup.append(lambda: self.context.off("page", None))
             self.is_recording = True
             self.current_url = self.page.url
             logger.info("User‑input tracking started")
             return True
         except Exception:
             logger.exception("Failed to start tracking")
-            await self._unregister()
+            await self.stop_tracking()
             return False
 
     async def stop_tracking(self):
         if not self.is_recording:
             return
-        await self._unregister()
-        self.is_recording = False
-        logger.info("User‑input tracking stopped")
-
-    # --------------------------------------------------
-    # Internal registration / teardown
-    # --------------------------------------------------
-
-    async def _register(self):
-        # 1. enable Page domain for navigation events
-        await self.cdp_client.send("Page.enable")
-        self.cdp_client.on("Page.frameNavigated", self._on_cdp_navigation)
-        self._cleanup.append(lambda: self.cdp_client.off("Page.frameNavigated", self._on_cdp_navigation))
-
-        # 2. expose python binding first
-        await self.page.expose_binding(self.BINDING, self._on_dom_event)
-
-        # 3. build & persist init script (future navs)
-        script = self._JS_TEMPLATE.format(binding=self.BINDING)
-        await self.page.add_init_script(script)
-
-        # 4. run now in current frames
-        await self._eval_in_all_frames(script)
-
-        # 5. keep new / navigated frames covered
-        self.page.on("frameattached",  lambda f: asyncio.create_task(self._safe_eval(f, script)))
-        self.page.on("framenavigated", lambda f: asyncio.create_task(self._safe_eval(f, script)))
-        self._cleanup.append(lambda: self.page.off("frameattached", None))
-        self._cleanup.append(lambda: self.page.off("framenavigated", None))
-
-    async def _unregister(self):
         for fn in self._cleanup:
             try:
                 fn()
             except Exception:
                 pass
         self._cleanup.clear()
+        self.is_recording = False
+        logger.info("User‑input tracking stopped")
 
     # --------------------------------------------------
-    # Helpers for frame eval
+    # Per‑page setup
     # --------------------------------------------------
 
-    async def _eval_in_all_frames(self, script: str):
-        await self._safe_eval(self.page.main_frame, script)
-        for fr in self.page.frames:
-            await self._safe_eval(fr, script)
+    async def _setup_page(self, page):
+        """Expose binding, inject script, handle nav + new frames on one page."""
+        # 1. binding
+        await page.expose_binding(self.BINDING, self._on_dom_event)
 
-    async def _safe_eval(self, frame, script: str):
-        try:
-            await frame.evaluate(script)
-        except Exception:
-            pass  # cross‑origin or sandboxed frames may refuse
+        # 2. navigation listener (Playwright-level)
+        page.on("framenavigated", lambda fr: self._on_playwright_nav(page, fr))
+        self._cleanup.append(lambda: page.off("framenavigated", None))
+
+        # 3. keep script on future navs and run now
+        await page.add_init_script(self._script_source)
+        await self._eval_in_all_frames(page, self._script_source)
+
+        # 4. cover dynamic frames in this page
+        page.on("frameattached", lambda fr: asyncio.create_task(self._safe_eval(fr, self._script_source)))
+        page.on("framenavigated", lambda fr: asyncio.create_task(self._safe_eval(fr, self._script_source)))
+        self._cleanup.append(lambda: page.off("frameattached", None))
 
     # --------------------------------------------------
-    # Bridge: JS → Python
+    # JS → Python bridge
     # --------------------------------------------------
 
     async def _on_dom_event(self, _source, p: Dict[str, Any]):
@@ -178,11 +152,10 @@ class UserInputTracker:
         try:
             ts = p.get("ts", time.time()*1000)/1000.0
             url = p.get("url", self.current_url)
-            mods = [m for m, f in (("alt",p.get("alt")), ("ctrl",p.get("ctrl")), ("shift",p.get("shift")), ("meta",p.get("meta"))) if f]
+            mods = [m for m, f in (("alt",p.get("alt")),("ctrl",p.get("ctrl")),("shift",p.get("shift")),("meta",p.get("meta"))) if f]
             typ = p.get("type")
             if typ == "mousedown":
-                btn_map = {0:"left", 1:"middle", 2:"right"}
-                button  = btn_map.get(p.get("button"), "unknown")
+                button = {0:"left",1:"middle",2:"right"}.get(p.get("button"), "unknown")
                 evt = MouseClickEvent(ts, url, "mouse_click", int(p.get("x",0)), int(p.get("y",0)), button, mods)
             elif typ == "keydown":
                 evt = KeyboardEvent(ts, url, "keyboard_input", str(p.get("key")), str(p.get("code")), mods)
@@ -194,35 +167,42 @@ class UserInputTracker:
             logger.exception("Malformed DOM payload: %s", p)
 
     # --------------------------------------------------
-    # CDP navigation handler
+    # Navigation via Playwright
     # --------------------------------------------------
 
-    def _on_cdp_navigation(self, ev: Dict[str, Any]):
+    def _on_playwright_nav(self, page, frame):
         if not self.is_recording:
             return
-        url = ev.get("frame", {}).get("url")
-        if url and url not in (self.current_url, "about:blank"):
-            nav = NavigationEvent(time.time(), url, "navigation", self.current_url, url)
-            self.events.append(nav)
-            self.current_url = url
+        if frame.parent_frame is None:  # top‑level navigation
+            url = frame.url
+            if url and url not in (self.current_url, "about:blank"):
+                nav = NavigationEvent(time.time(), url, "navigation", self.current_url, url)
+                self.events.append(nav)
+                self.current_url = url
+                logger.info("🧭 Navigation recorded %s", url)
 
     # --------------------------------------------------
-    # Export helpers
+    # Frame‑eval helpers
+    # --------------------------------------------------
+
+    async def _eval_in_all_frames(self, page, script):
+        await self._safe_eval(page.main_frame, script)
+        for fr in page.frames:
+            await self._safe_eval(fr, script)
+
+    async def _safe_eval(self, frame, script):
+        try:
+            await frame.evaluate(script)
+        except Exception:
+            pass
+
+    # --------------------------------------------------
+    # Export
     # --------------------------------------------------
 
     def export_events_to_json(self) -> str:
         return json.dumps({
-            "version": "1.5",
+            "version": "2.0",
             "timestamp": time.time(),
             "events": [asdict(e) for e in self.events],
         }, indent=2)
-
-    # --------------------------------------------------
-    # Synchronous wrappers (optional)
-    # --------------------------------------------------
-
-    def start_sync(self, **kw):
-        return asyncio.get_event_loop().run_until_complete(self.start_tracking(**kw))
-
-    def stop_sync(self):
-        return asyncio.get_event_loop().run_until_complete(self.stop_tracking())
