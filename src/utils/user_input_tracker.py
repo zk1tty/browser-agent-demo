@@ -146,7 +146,7 @@ class UserInputTracker:
     # JS → Python bridge
     # --------------------------------------------------
 
-    async def _on_dom_event(self, _source, p: Dict[str, Any]):
+    async def _on_dom_event(self, _src, p: Dict[str, Any]):
         if not self.is_recording:
             return
         try:
@@ -157,12 +157,12 @@ class UserInputTracker:
             if typ == "mousedown":
                 button = {0:"left",1:"middle",2:"right"}.get(p.get("button"), "unknown")
                 evt = MouseClickEvent(ts, url, "mouse_click", int(p.get("x",0)), int(p.get("y",0)), button, mods)
+                self.events.append(evt)
+                logger.info("🖱️ MouseClick – %s", evt)
             elif typ == "keydown":
                 evt = KeyboardEvent(ts, url, "keyboard_input", str(p.get("key")), str(p.get("code")), mods)
-            else:
-                return
-            self.events.append(evt)
-            logger.info("🟢 Python binding hit – recorded %s", evt)
+                self.events.append(evt)
+                logger.info("⌨️ KeyInput   – %s", evt)
         except Exception:
             logger.exception("Malformed DOM payload: %s", p)
 
