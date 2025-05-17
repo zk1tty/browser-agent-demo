@@ -37,7 +37,10 @@ Check out our [Roadmap](./ROADMAP.md).
 ---
 ## Installation Guide
 
-<img src="https://raw.githubusercontent.com/zk1tty/rebrowse-app/main/assets/rebrowse-setting.png" alt="Rebrowse Setting" width="full" />
+<div style="display: flex; justify-content: space-between;">
+  <img src="https://raw.githubusercontent.com/zk1tty/rebrowse-app/main/assets/rebrowse-agent-tab.png" alt="Rebrowse Agent Tab" width="350" style="display: block; margin-left: 0"/>
+  <img src="https://raw.githubusercontent.com/zk1tty/rebrowse-app/main/assets/rebrowse-record-tab.png" alt="Rebrowse Record Tab" width="350" style="display: block; margin-right: 0"/>
+</div>
 
 ### Prerequisites
 - Python 3.8 or higher

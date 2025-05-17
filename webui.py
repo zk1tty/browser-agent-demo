@@ -1074,13 +1074,13 @@ def create_ui(theme_name="Citrus"):
     """
 
     with gr.Blocks(
-            title="🌐🔄 Rebrowse Directory", theme=theme_map[theme_name], css=css
+            title="Rebrowse", theme=theme_map[theme_name], css=css
     ) as demo:
         with gr.Row():
             gr.Markdown(
                 """
-                # 🌐🔄 Rebrowse Directory
-                ### the first directory of cross-app workflows by recording, instead of node editors like Zapier or n8n.
+                # Rebrowse
+                ### the browser-agent which repeats cross-app workflows by recording
                 """,
                 elem_classes=["header-text"],
             )
