@@ -37,9 +37,9 @@ Check out our [Roadmap](./ROADMAP.md).
 ---
 ## Installation Guide
 
-<div style="display: flex; justify-content: space-between;">
-  <img src="https://raw.githubusercontent.com/zk1tty/rebrowse-app/main/assets/rebrowse-agent-tab.png" alt="Rebrowse Agent Tab" width="350" style="display: block; margin-left: 0"/>
-  <img src="https://raw.githubusercontent.com/zk1tty/rebrowse-app/main/assets/rebrowse-record-tab.png" alt="Rebrowse Record Tab" width="350" style="display: block; margin-right: 0"/>
+<div style="display: flex; flex-direction: column; align-items: center;">
+  <img src="https://raw.githubusercontent.com/zk1tty/rebrowse-app/main/assets/rebrowse-agent-tab.png" alt="Rebrowse Agent Tab" width="100%" style="display: block; margin-bottom: 10px;"/>
+  <img src="https://raw.githubusercontent.com/zk1tty/rebrowse-app/main/assets/rebrowse-record-tab.png" alt="Rebrowse Record Tab" width="100%" style="display: block;"/>
 </div>
 
 ### Prerequisites
