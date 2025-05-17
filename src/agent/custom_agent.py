@@ -106,10 +106,10 @@ class CustomAgent(Agent):
             planner_llm: Optional[BaseChatModel] = None,
             planner_interval: int = 1,  # Run planner every N steps
             # Inject state
-            injected_agent_state: Optional[AgentState] = None,
+            injected_agent_state: Optional[CustomAgentState] = None,
             context: Context | None = None,
     ):
-        super(CustomAgent, self).__init__(
+        super().__init__(
             task=task,
             llm=llm,
             browser=browser,
@@ -138,11 +138,14 @@ class CustomAgent(Agent):
             page_extraction_llm=page_extraction_llm,
             planner_llm=planner_llm,
             planner_interval=planner_interval,
-            injected_agent_state=injected_agent_state,
+            injected_agent_state=None,
             context=context,
         )
-        self.state = injected_agent_state or CustomAgentState()
+        self.state: CustomAgentState = CustomAgentState()
+        if injected_agent_state is not None:
+            logger.warning("injected_agent_state was provided but is currently not used to initialize CustomAgent's state beyond superclass.")
         self.add_infos = add_infos
+        self.replay_event_file: Optional[str] = None
         self._message_manager = CustomMessageManager(
             task=task,
             system_message=self.settings.system_prompt_class(
@@ -246,7 +249,7 @@ class CustomAgent(Agent):
         # The final result is stored at debug/input_message.txt
         json_str = json.dumps([{'type': m.get('type') if isinstance(m, dict) else type(m).__name__, 'content': m.get('content') if isinstance(m, dict) else m} for m in cleaned_messages], indent=2)
         formatted_str = json_str.replace(r'\n', '\n')
-        logger.info(f"cleaned_messages: {formatted_str}")
+        logger.debug(f"AI_input_messages: {formatted_str}")
 
         # TODO: This is where the LLM is called
         ai_message = self.llm.invoke(fixed_input_messages)
@@ -455,6 +458,11 @@ class CustomAgent(Agent):
         # Reverse back to chronological order and join
         return "Browsing History (Recent Steps):\n" + "".join(reversed(summary_lines))
 
+    def set_replay_mode(self, event_file_path: str):
+        """Sets the agent to replay mode using the provided event file."""
+        self.replay_event_file = event_file_path
+        logger.info(f"Agent set to REPLAY MODE. Event log: {self.replay_event_file}")
+
     @time_execution_async("--step")
     async def step(self, step_info: Optional[CustomAgentStepInfo] = None) -> None:
         """Execute one step of the task"""
@@ -568,6 +576,56 @@ class CustomAgent(Agent):
         """Execute the task with maximum number of steps"""
         try:
             self._log_agent_run()
+
+            # ---- REPLAY MODE LOGIC ----
+            if self.replay_event_file:
+                logger.info(f"🚀 Agent starting in REPLAY MODE. Event log: {self.replay_event_file}")
+                
+                # Ensure browser_context is CustomBrowserContext and available
+                if not hasattr(self, 'browser_context') or self.browser_context is None:
+                    logger.error("❌ Replay mode error: Browser context is not available.")
+                    self.state.history.add_error("Replay failed: Browser context not available.") # Assumes add_error method exists
+                    # self.state.history.set_done(success=False, message="Replay failed due to missing context.") # if set_done exists
+                    return self.state.history
+
+                # Dynamically import CustomBrowserContext to avoid circular import issues if CustomAgent is imported elsewhere
+                from src.browser.custom_context import CustomBrowserContext
+                if isinstance(self.browser_context, CustomBrowserContext):
+                    try:
+                        replay_successful = await self.browser_context.replay_input_events(self.replay_event_file)
+                        if replay_successful:
+                            logger.info("✅ Event replay completed successfully.")
+                            # Assuming set_done is the correct method for AgentHistoryList based on prior context
+                            # If AgentHistoryList doesn't have set_done, this will need adjustment.
+                            if hasattr(self.state.history, 'set_done'):
+                                self.state.history.set_done(success=True, message=f"Replay of {self.replay_event_file} completed successfully.")
+                            else:
+                                # Fallback: add a general success event/message if set_done is not available
+                                self.state.history.add_event({"type": "replay_status", "status": "success", "message": f"Replay of {self.replay_event_file} completed successfully."})
+                        else:
+                            logger.error(f"❌ Event replay failed for {self.replay_event_file}.")
+                            self.state.history.add_error(f"Replay failed for log: {self.replay_event_file}")
+                            if hasattr(self.state.history, 'set_done'):
+                                self.state.history.set_done(success=False, message=f"Replay of {self.replay_event_file} failed.")
+                            else:
+                                self.state.history.add_event({"type": "replay_status", "status": "failure", "message": f"Replay of {self.replay_event_file} failed."})
+                    except Exception as e:
+                        logger.error(f"❌ Exception during event replay: {str(e)}")
+                        self.state.history.add_error(f"Exception during replay: {str(e)}")
+                        if hasattr(self.state.history, 'set_done'):
+                            self.state.history.set_done(success=False, message=f"Replay of {self.replay_event_file} encountered an exception.")
+                        else:
+                             self.state.history.add_event({"type": "replay_status", "status": "exception", "message": f"Replay of {self.replay_event_file} encountered an exception: {str(e)}"})
+                else:
+                    logger.error("❌ Replay mode error: Browser context is not a CustomBrowserContext.")
+                    self.state.history.add_error("Replay failed: Incompatible browser context type.")
+                    if hasattr(self.state.history, 'set_done'):
+                        self.state.history.set_done(success=False, message="Replay failed due to context incompatibility.")
+                    else:
+                        self.state.history.add_event({"type": "replay_status", "status": "failure", "message": "Replay failed due to context incompatibility."})
+                
+                return self.state.history # End execution after replay attempt
+
 
             # Execute initial actions if provided
             if self.initial_actions:
