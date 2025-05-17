@@ -50,7 +50,6 @@ class UserInputTracker:
         const send = (type, e) => {{
             console.log('[UIT]', type, e.key ?? e.button, e.clientX ?? '', e.clientY ?? '');
             if (window[binding]) {{
-                console.log('[UIT] calling python binding', binding);
                 window[binding]({{
                     type,
                     ts: Date.now(),
@@ -95,12 +94,19 @@ class UserInputTracker:
     async def start_tracking(self):
         if self.is_recording:
             return True
+        if not self.page:
+            logger.error("UserInputTracker: Page is not set, cannot start tracking.")
+            return False
+        if not self.context:
+            logger.error("UserInputTracker: Context is not set, cannot start tracking.")
+            return False
+            
         try:
             await self._setup_page(self.page)            # existing page
             self.context.on("page", lambda p: asyncio.create_task(self._setup_page(p)))
-            self._cleanup.append(lambda: self.context.off("page", None))
+            self._cleanup.append(lambda: self.context.off("page", None) if self.context else None)
             self.is_recording = True
-            self.current_url = self.page.url
+            self.current_url = self.page.url if self.page else ""
             logger.info("User‑input tracking started")
             return True
         except Exception:
@@ -155,8 +161,12 @@ class UserInputTracker:
             mods = [m for m, f in (("alt",p.get("alt")),("ctrl",p.get("ctrl")),("shift",p.get("shift")),("meta",p.get("meta"))) if f]
             typ = p.get("type")
             if typ == "mousedown":
-                button = {0:"left",1:"middle",2:"right"}.get(p.get("button"), "unknown")
-                evt = MouseClickEvent(ts, url, "mouse_click", int(p.get("x",0)), int(p.get("y",0)), button, mods)
+                button_code = p.get("button") 
+                button_name = "unknown"
+                if isinstance(button_code, int): # Ensure button_code is an int before using as dict key
+                    button_name = {0:"left",1:"middle",2:"right"}.get(button_code, "unknown")
+                
+                evt = MouseClickEvent(ts, url, "mouse_click", int(p.get("x",0)), int(p.get("y",0)), button_name, mods)
                 self.events.append(evt)
                 logger.info("🖱️ MouseClick – %s", evt)
             elif typ == "keydown":
@@ -206,3 +216,31 @@ class UserInputTracker:
             "timestamp": time.time(),
             "events": [asdict(e) for e in self.events],
         }, indent=2)
+
+    def export_events_to_jsonl(self) -> str:
+        lines = []
+        last_ts = self.events[0].timestamp if self.events else 0
+        for ev in self.events:
+            dt = int((ev.timestamp - last_ts)*1000)
+            last_ts = ev.timestamp
+            # Create a dictionary from the event, ensuring 'timestamp' is not carried over.
+            line_dict = asdict(ev)
+            # TODO: which file is the reference? 
+            # The problem statement implies 'event_type' should be 'type' in the output.
+            # and 'to_url' should be 'to' for navigation events.
+            # also, 'timestamp' is replaced by 't' (delta time).
+            line_dict["type"] = line_dict.pop("event_type")
+            if "timestamp" in line_dict: # should always be true based on InputEvent
+                del line_dict["timestamp"]
+            if line_dict["type"] == "navigation":
+                if "to_url" in line_dict: # Ensure to_url exists
+                    line_dict["to"] = line_dict.pop("to_url")
+                if "from_url" in line_dict: # from_url is not in the example, remove
+                    del line_dict["from_url"]
+            # The example shows 'mods' instead of 'modifiers' for keyboard/mouse events.
+            if "modifiers" in line_dict:
+                line_dict["mods"] = line_dict.pop("modifiers")
+
+            line_dict["t"] = dt
+            lines.append(json.dumps(line_dict))
+        return "\n".join(lines)
