@@ -1,7 +1,8 @@
-# ▶️ Replay mode
+# Tech Architecture
 
 ## Motivation
 
+I will introduce ▶️ Replay mode.   
 Why do we need replay?  
 
 ## Architecture
