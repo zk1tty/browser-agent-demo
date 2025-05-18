@@ -39,7 +39,7 @@ Check out our [Roadmap](./ROADMAP.md).
 
 <div style="display: flex; flex-direction: column; align-items: center;">
   <img src="https://raw.githubusercontent.com/zk1tty/rebrowse-app/main/assets/rebrowse-agent-tab.png" alt="Rebrowse Agent Tab" width="100%" style="display: block; margin-bottom: 10px;"/>
-  <img src="https://raw.githubusercontent.com/zk1tty/rebrowse-app/main/assets/rebrowse-replay-tab.png" alt="Rebrowse Record Tab" width="100%" style="display: block;"/>
+  <img src="https://raw.githubusercontent.com/zk1tty/rebrowse-app/main/assets/rebrowse-replay-tab.png" alt="Rebrowse Replay Tab" width="100%" style="display: block;"/>
 </div>
 
 ### Prerequisites
