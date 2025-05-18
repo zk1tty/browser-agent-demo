@@ -38,7 +38,10 @@ Check out our [Roadmap](./ROADMAP.md).
 ## Installation Guide
 
 <div style="display: flex; flex-direction: column; align-items: center;">
+  ► Run Agent with text prompt
   <img src="https://raw.githubusercontent.com/zk1tty/rebrowse-app/main/assets/rebrowse-agent-tab.png" alt="Rebrowse Agent Tab" width="100%" style="display: block; margin-bottom: 10px;"/>
+  ► Run Agent with recording
+
   <img src="https://raw.githubusercontent.com/zk1tty/rebrowse-app/main/assets/rebrowse-replay-tab.png" alt="Rebrowse Replay Tab" width="100%" style="display: block;"/>
 </div>
 
