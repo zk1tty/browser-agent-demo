@@ -29,8 +29,8 @@ Follow [me on Twitter](https://x.com/n0rizkitty) for the latest updates!
 
 ## Roadmap
 
-We're gonna build a marketplace, where users can share cross-app workflows by recording, instead of node editors like Zapier or n8n.      
-Check out our [Roadmap](./ROADMAP.md).   
+We are going to build a marketplace, where users can share cross-app workflows by recording, instead of node editors like Zapier or n8n.      
+Check out our [Roadmap](./doc/ROADMAP.md).   
 
 <img src="https://raw.githubusercontent.com/zk1tty/rebrowse-app/main/assets/rebrowse-flywheel.png" alt="Rebrowse Flywheel" width="350" style="display: block; margin-left: 0;">
 
@@ -59,7 +59,7 @@ cd rebrowse-app
 
 ### Step 2: Set Up Python Environment
 
-- We recomended to use uv as reccomnede at the [brwoser-use doc](https://docs.browser-use.com/quickstart).
+- We recommend using uv as recommended in the [browser-use documentation](https://docs.browser-use.com/quickstart).
 - You can download uv from [here](https://docs.astral.sh/uv/#installation)
 
 ```bash
@@ -78,7 +78,7 @@ uv pip install -r requirements.txt
 ```
 
 ### Step 3: Configure Environment Variables
-1. Copy `.env.examlpe` file to `.env` file in the project root.
+1. Copy the `.env.example` file to a new file named `.env` in the project root.
 
 2. Open `.env` file, and add API key and chrome paths
     ```bash
@@ -88,7 +88,7 @@ uv pip install -r requirements.txt
 
     ```bash
     # Chrome Configuration
-    # Note: Not MacOS user? please identify your Chrome application path:
+    # Note: If you are not a macOS user, please identify your Chrome application path:
     # - Windows: `C:\Program Files\Google\Chrome\Application\chrome.exe`
     # - Linux: `/usr/bin/google-chrome`
     CHROME_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
@@ -96,7 +96,7 @@ uv pip install -r requirements.txt
     CHROME_USER_DATA="/Users/{username}/Library/Application Support/Google/Chrome"
     CHROME_CDP="http://localhost:9222"
     ```
-### Step 4: Close all opening Chrome tabs!! IMPORTANT!!
+### Step 4: Close all open Chrome tabs. IMPORTANT!!
 
 <img src="https://raw.githubusercontent.com/zk1tty/rebrowse-app/main/assets/step_quit_chrome.png" alt="Quit Chrome" width="350" style="display: block; margin-left: 0;">
 
@@ -107,7 +107,7 @@ pkill -9 "Google Chrome"
 ```
 
 
-### Step 5: Launch the web Application
+### Step 5: Launch the Web Application
 ```bash
 # Start with Gradio
 gradio webui.py
@@ -124,52 +124,61 @@ The application will be available at `http://127.0.0.1:7860`
 
 ### Step 7: Run a clean Chrome with CDP session
   
-⚠️ I'm temporary making the test profile on the same 
-project file, and name it `/custom_chrome_profile` for debuging purpose.
+⚠️ I am temporarily making the test profile on the same 
+project file, and name it `/custom_chrome_profile` for debugging purposes.
 
-1. create a new clean chrome profile
+1. Create a new, clean Chrome profile
     ```
     mkdir -p custom_chrome_profile
     ```
 
 2. Run this Chrome using this new profile.
-    Configuration details to conenct to your own Chrome is [here](https://docs.browser-use.com/customize/real-browser). 
+    Configuration details to connect to your own Chrome are [here](https://docs.browser-use.com/customize/real-browser). 
     
     ```bash
     sh run_custom_chrome.sh
     ```
 
-3. Make sure that devtool websocket session is available
+3. Make sure that the DevTools WebSocket session is available
     ```
     DevTools listening on ws://127.0.0.1:9222/devtools/browser/1bbd94a9-aed9-4462-bc25-fddec9d9663c
     ```
-4. Login web apps on a new Chrome profile
+4. Log in to web apps on the new Chrome profile
    In this process, you will create a new Chrome profile to be used by browser-agents.
     - log in to your web accounts: X, LinkedIn, Youtube, etc.
-    - if browser-agent can skip this process, then easier to handle executions.
+    - If the browser agent can skip this process, it will be easier to handle executions.
 
 ### Step 8: Ready to play ^^
 - Go to "Choose Agent" tab
-- PItck up Preset Task
+- Pick up a Preset Task
 - Try "Run Agent"
-- Enjoy your browseing agent.
+- Enjoy your browsing agent.
 
 ---
-## Background
+## Are you a dev?
+
+Let me navigate you through the technical concept and objectives of Rebrowse.
+
+
+### Background
 
 This project builds upon the foundation of [browser-use](https://github.com/browser-use/browser-use), which is designed to make websites accessible for AI agents.
 
-We would like to officially thank [WarmShao](https://github.com/warmshao) for his contribution to this project.
+The original creator is [WarmShao](https://github.com/warmshao), who made the WebUI.
 
-**WebUI:** Built on Gradio, supporting most `browser-use` functionalities. This UI is designed to be user-friendly and enables easy interaction with the browser agent.
+### Key difference from Browser-use?
 
-**Expanded LLM Support:** We've integrated support for various Large Language Models (LLMs), including: Google, OpenAI, Azure OpenAI, Anthropic, DeepSeek, Ollama, etc. We plan to add support for even more models in the future.
+I introduced our technical architecture and approaches in [Architecure](./doc/architecture.md).   
+It's a work in progress, but let me share our technical roadmap.   
 
-**Custom Browser Support:** You can use your own browser with our tool, eliminating the need to re-login to sites or deal with other authentication challenges. This feature also supports high-definition screen recording.
+- [x] Make a workflow traceable 
+- [ ] Implement Replay mode with `TraceReplayer` 
+- [ ] Measure the accuracy and speed of replay mode in comparison with agent mode
+- [ ] Design `TraceReplayer` memory to handle edge cases
+- [ ] Add multi-thread execution of a single workflow
+- [ ] Add a reasoning process before the workflow is traceable
 
-**Persistent Browser Sessions:** You can choose to keep the browser window open between AI tasks, allowing you to see the complete history and state of AI interactions.
-
-### Development Mode of gradio
+### Gradio Development Mode
 For development with auto-reload:
 ```bash
 gradio webui.py --watch src
