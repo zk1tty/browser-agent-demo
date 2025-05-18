@@ -1,3 +1,15 @@
+# ▶️ Replay mode
+
+## Motivation
+
+Why do we need replay?  
+
+## Architecture
+
+<img src="https://raw.githubusercontent.com/zk1tty/rebrowse-app/main/assets/diagram/browser-use-diagram.png" alt="Browser-use diagram" width="100%" style="display: block;"/>
+
+<img src="https://raw.githubusercontent.com/zk1tty/rebrowse-app/main/assets/diagram/rebrowse-diagram.png" alt="Rebrowse diagram" width="100%" style="display: block;"/>
+
 ## User Jouenry
 
 1. A user open a custom Chrome browser:   
@@ -13,6 +25,21 @@
 6. The event listener is off, and export the event history:   
     UserInputTracker.stop_tracking() unregisters the CDP listeners.
     The CustomBrowserContext.stop_user_input_tracking() method then handles saving the recorded events to a file if configured to do so.
+
+
+##  Workflow of Replay
+
+Our implementation:
+```
+TraceReplayer.play()
+  ├─ _apply(click #42)             ← executes event
+  └─ _verify_next_state(click #42)
+          └── mismatch → raise Drift("clicked element missing", ev)
+CustomAgent.run()
+  ├─ try: await replayer.play()
+  └─ except Drift as d:
+         log …; continue with get_next_action()  # autonomous recovery
+```
 
 ## Event History File
 
@@ -32,7 +59,7 @@
 - Each event object in the "events" list is a dictionary derived from one of the event dataclasses (InputEvent, MouseClickEvent, KeyboardEvent, NavigationEvent, etc.). The fields include:
     1. Common fields from InputEvent: timestamp (when the event occurred), url (current page URL), event_type (e.g., "mouse_click", "keyboard_input", "navigation").
     2. Specific fields for each event type:
-MouseClickEvent: x, y, button, element_selector, element_text.
+    - MouseClickEvent: x, y, button, element_selector, element_text.
     - KeyboardEvent: key, modifiers (like Shift, Ctrl), text (the actual text typed, if any), and the recently added element_selector and element_text for the target input field.
     - NavigationEvent: from_url, to_url.
 Other event types would have their respective fields.
