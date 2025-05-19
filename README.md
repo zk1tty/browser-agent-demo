@@ -21,29 +21,34 @@ Explore our Showcases at [rebrowse.me](https://rebrowse.me)
 - Scenario: Book an Airbnb apartment with specific conditions
 - Environment: Chrome browser with a personal Google account
 
+
 [![Airbnb Booking Demo](https://img.youtube.com/vi/1kQu8oYG-2g/0.jpg)](https://youtu.be/1kQu8oYG-2g)
 
-*Click the thumbnail to watch [on YouTube](https://youtu.be/1kQu8oYG-2g)!*
+(Recording demo is coming soon....!!!)
 
 Follow [me on Twitter](https://x.com/n0rizkitty) for the latest updates!
 
-## Roadmap
+---
+# Web App
 
-We are going to build a marketplace, where users can share cross-app workflows by recording, instead of node editors like Zapier or n8n.      
-Check out our [Roadmap](./doc/ROADMAP.md).   
+<div style="display: flex; flex-direction: column; align-items: flex-start;">
+  <span style="font-size: 1.2em;"><strong>► Run Agent with text prompt</strong></span>
+  <ul>
+    <li>👍 Robust. </li>
+    <li>👎 needs long descriptive prompt. slow.</li>
+  </ul>
+  <img src="https://raw.githubusercontent.com/zk1tty/rebrowse-app/main/assets/rebrowse-agent-tab.png" alt="Rebrowse Agent Tab" width="100%" style="display: block; margin-bottom: 10px;"/>
 
-<img src="https://raw.githubusercontent.com/zk1tty/rebrowse-app/main/assets/rebrowse-flywheel.png" alt="Rebrowse Flywheel" width="350" style="display: block; margin-left: 0;">
+  <span style="font-size: 1.2em;"><strong>► Run Agent with recording</strong></span>
+  <ul>
+    <li>👍 Determinictic. 10x fast. 3x Accurate.</li>
+    <li>⚠️ AI-powered fall-back is WIP.</li>
+  </ul>
+  <img src="https://raw.githubusercontent.com/zk1tty/rebrowse-app/main/assets/rebrowse-replay-tab.png" alt="Rebrowse Replay Tab" width="100%" style="display: block;"/>
+</div>
 
 ---
 ## Installation Guide
-
-<div style="display: flex; flex-direction: column; align-items: center;">
-  ► Run Agent with text prompt
-  <img src="https://raw.githubusercontent.com/zk1tty/rebrowse-app/main/assets/rebrowse-agent-tab.png" alt="Rebrowse Agent Tab" width="100%" style="display: block; margin-bottom: 10px;"/>
-  ► Run Agent with recording
-
-  <img src="https://raw.githubusercontent.com/zk1tty/rebrowse-app/main/assets/rebrowse-replay-tab.png" alt="Rebrowse Replay Tab" width="100%" style="display: block;"/>
-</div>
 
 ### Prerequisites
 - Python 3.8 or higher
@@ -188,6 +193,13 @@ Let me share our technical roadmap.
 I found that @browser-use team released [workflow-use](https://github.com/browser-use/workflow-use).
 I'm still researching their approach and objectives.   
 Let's talk more on [X](https://x.com/n0rizkitty) or [Telegram](https://x.com/n0rizkitty).
+
+## Product Roadmap
+
+We are going to build a marketplace, where users can share cross-app workflows by recording, instead of node editors like Zapier or n8n.      
+Check out our [Roadmap](./doc/ROADMAP.md).   
+
+<img src="https://raw.githubusercontent.com/zk1tty/rebrowse-app/main/assets/rebrowse-flywheel.png" alt="Rebrowse Flywheel" width="350" style="display: block; margin-left: 0;">
 
 
 ### Gradio Development Mode
