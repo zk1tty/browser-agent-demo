@@ -168,15 +168,25 @@ The original creator is [WarmShao](https://github.com/warmshao), who made the We
 
 ### Key difference from Browser-use?
 
-I introduced our technical architecture and approaches in [Architecure](./doc/architecture.md).   
-It's a work in progress, but let me share our technical roadmap.   
+I needed to make the workflow of agent behaibier by faster and accurate.   
+One approach to do this is recoeding and make it repeatable.   
+I introduced our technical architecture in [Architecure](./doc/architecture.md).   
+
+Let me share our technical roadmap.   
 
 - [x] Make a workflow traceable 
-- [ ] Implement Replay mode with `TraceReplayer` 
+- [x] Implement Replay mode with `TraceReplayer` 
 - [ ] Measure the accuracy and speed of replay mode in comparison with agent mode
 - [ ] Design `TraceReplayer` memory to handle edge cases
 - [ ] Add multi-thread execution of a single workflow
 - [ ] Add a reasoning process before the workflow is traceable
+
+### Update on 19th May
+
+I found that @browser-use team released [workflow-use](https://github.com/browser-use/workflow-use).
+I'm still researching their approach and objectives.   
+Let's talk more on [X](https://x.com/n0rizkitty) or [Telegram](https://x.com/n0rizkitty).
+
 
 ### Gradio Development Mode
 For development with auto-reload:
