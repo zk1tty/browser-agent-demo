@@ -176,6 +176,8 @@ Let me share our technical roadmap.
 
 - [x] Make a workflow traceable 
 - [x] Implement Replay mode with `TraceReplayer` 
+- [ ] Add an eval process to trigger Drift or not.  <- enough flexible
+- [ ] Take a demo video and add here.
 - [ ] Measure the accuracy and speed of replay mode in comparison with agent mode
 - [ ] Design `TraceReplayer` memory to handle edge cases
 - [ ] Add multi-thread execution of a single workflow
