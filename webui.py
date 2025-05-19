@@ -1,5 +1,6 @@
 import pdb
 import logging
+import os
 
 from dotenv import load_dotenv
 
@@ -8,7 +9,6 @@ import os
 import glob
 import asyncio
 import argparse
-import os
 
 # Import task templates
 from task_templates import TASK_TEMPLATES
@@ -50,7 +50,7 @@ from src.utils import utils
 from src.browser.custom_context_config import CustomBrowserContextConfig as AppCustomBrowserContextConfig
 from browser_use.browser.context import BrowserContextConfig
 from pathlib import Path
-from typing import Optional, Union
+from typing import Optional, Union, Tuple, List, Dict, Any
 
 # Global variables for persistence
 _global_browser: Optional[CustomBrowser] = None
@@ -64,9 +64,12 @@ _global_agent_state = AgentState()
 # webui config
 webui_config_manager = utils.ConfigManager()
 
+# New: For manual record/replay
+_last_manual_trace_path: Optional[str] = None
+MANUAL_TRACES_DIR = "./tmp/input_tracking"  # Reverted to ./tmp/input_tracking
+
 # New: repeat feature
 import json
-from typing import Tuple, List, Dict, Any
 
 # New: user input tracking functions
 from src.utils import user_input_functions
@@ -222,7 +225,7 @@ async def run_browser_agent(
         chrome_cdp,
         max_input_tokens,
         enable_input_tracking=False,
-        save_input_tracking_path="./tmp/input_tracking"
+        save_input_tracking_path=MANUAL_TRACES_DIR
 ):
     try:
         # Disable recording if the checkbox is unchecked
@@ -363,7 +366,7 @@ async def run_org_agent(
         chrome_cdp,
         max_input_tokens,
         enable_input_tracking: bool = False,
-        save_input_tracking_path: str = "./tmp/input_tracking"
+        save_input_tracking_path: str = MANUAL_TRACES_DIR
 ):
     try:
         global _global_browser, _global_browser_context, _global_agent
@@ -433,6 +436,7 @@ async def run_org_agent(
             await _global_browser_context.playwright_context.new_page()
 
         if _global_agent is None:
+            logger.info(f"Running agent task: {task}")
             _global_agent = Agent(
                 task=task,
                 llm=llm,
@@ -448,6 +452,11 @@ async def run_org_agent(
 
         history_file = os.path.join(save_agent_history_path, f"{_global_agent.state.agent_id}.json")
         _global_agent.save_history(history_file)
+
+        # Handle case where history might be None (e.g., if it were a replay, though not via this path)
+        if history is None:
+            logger.warning("Agent run in run_org_agent returned None for history. Returning Nones.")
+            return None, None, None, None, None, None
 
         final_result = history.final_result()
         errors = history.errors()
@@ -571,6 +580,7 @@ async def run_custom_agent(
 
         # Create and run agent
         if _global_agent is None:
+            logger.info(f"Running agent task: {task}")
             _global_agent = CustomAgent(
                 task=task,
                 add_infos=add_infos,
@@ -586,10 +596,16 @@ async def run_custom_agent(
                 max_input_tokens=max_input_tokens,
                 generate_gif=True
             )
-        history = await _global_agent.run(max_steps=max_steps)
+        history = await _global_agent.run(task_input=task, max_steps=max_steps)
 
         history_file = os.path.join(save_agent_history_path, f"{_global_agent.state.agent_id}.json")
         _global_agent.save_history(history_file)
+
+        # Handle case where history might be None (e.g., if CustomAgent was run in replay mode directly)
+        if history is None:
+            logger.warning("CustomAgent run returned None for history. Returning Nones.")
+            # This path is unlikely if run_custom_agent is always called with a string task for autonomous mode.
+            return None, None, None, None, None, None
 
         final_result = history.final_result()
         errors = history.errors()
@@ -644,7 +660,7 @@ async def run_with_stream(
         chrome_cdp,
         max_input_tokens,
         enable_input_tracking=False,
-        save_input_tracking_path="./tmp/input_tracking"
+        save_input_tracking_path=MANUAL_TRACES_DIR
 ):
     global _global_agent
 
@@ -968,7 +984,7 @@ async def start_input_tracking_with_context():
         _global_browser_context = await _global_browser.new_context(
             config=AppCustomBrowserContextConfig(
                 enable_input_tracking=True, 
-                save_input_tracking_path="./tmp/input_tracking",
+                save_input_tracking_path=MANUAL_TRACES_DIR,
                 browser_window_size=BrowserContextWindowSize(width=1280, height=1100)
             )
         )
@@ -984,7 +1000,7 @@ async def start_input_tracking_with_context():
                 logger.error(f"Error opening, navigating, or focusing new page for recording: {e}")
         else:
             logger.error("Failed to create a new browser context properly for recording.")
-            return "Status: Error - No valid browser context (check logs)", gr.update(interactive=True), None
+            return "Status: Error - No valid browser context (check logs)", gr.update(interactive=True), gr.update(interactive=False), None
     
     # DEBUGGING: Print ID of CustomBrowserContext class object used here for isinstance check
     from src.browser.custom_context import CustomBrowserContext as CBC_in_WebUI # Alias for clarity
@@ -999,32 +1015,32 @@ async def start_input_tracking_with_context():
     # because it's always created as CustomBrowserContext, and webui.py imports CustomBrowserContext correctly.
     if not isinstance(_global_browser_context, CBC_in_WebUI): # Use aliased import for the check
         logger.error(f"Failed to obtain a valid CustomBrowserContext. Cannot start input tracking. _global_browser_context is of type: {type(_global_browser_context)}")
-        return "Status: Error - No valid browser context (check logs)", gr.update(interactive=True), None
+        return "Status: Error - No valid browser context (check logs)", gr.update(interactive=True), gr.update(interactive=False), None
     
     if _global_browser_context:
         print(f"DEBUG: _global_browser_context actual type: {type(_global_browser_context)}, module: {type(_global_browser_context).__module__}, id: {id(type(_global_browser_context))}")
     else:
         print("DEBUG: _global_browser_context is None before isinstance check.")
-    print(f"DEBUG: CustomBrowserContext type in webui: {CustomBrowserContext}, module: {CustomBrowserContext.__module__}, id: {id(CustomBrowserContext)}")
     
     if isinstance(_global_browser_context, CustomBrowserContext):
         logger.info("Proceeding with input tracking as _global_browser_context is a CustomBrowserContext.")
+        user_input_functions.set_browser_context(_global_browser_context)
         if not _global_browser_context.pages:
             logger.error("The CustomBrowserContext has no pages. Cannot start tracking. Please ensure a page is open in the target context.")
-            return "Status: Error - Context has no pages", gr.update(interactive=True), None
+            return "Status: Error - Context has no pages", gr.update(interactive=True), gr.update(interactive=False), None
         else:
             success = await _global_browser_context.start_user_input_tracking()
             if success:
                 logger.info("Successfully started user input tracking via CustomBrowserContext.")
-                return "Status: Recording... (Events will appear below)", gr.update(interactive=True), None
+                return "Status: Recording... (Events will appear below)", gr.update(value="Recording...", interactive=False), gr.update(value="Stop Recording", interactive=True), None
             else:
                 logger.error("CustomBrowserContext failed to start user input tracking (see browser logs).")
-                return "Status: Error starting tracking (check logs)", gr.update(interactive=True), None
+                return "Status: Error starting tracking (check logs)", gr.update(interactive=True), gr.update(interactive=False), None
     else:
         # This block is effectively duplicated by the check at the beginning of the function now.
         # However, keeping the original structure with the new return style.
         logger.error(f"Failed to obtain a valid CustomBrowserContext. Cannot start input tracking. _global_browser_context is of type: {type(_global_browser_context)}")
-        return "Status: Error - No valid browser context (check logs)", gr.update(interactive=True), None
+        return "Status: Error - No valid browser context (check logs)", gr.update(interactive=True), gr.update(interactive=False), None
     
     # update_tracking_ui_elements() # REMOVED
 
@@ -1278,7 +1294,7 @@ def create_ui(theme_name="Citrus"):
                     save_input_tracking_path = gr.Textbox(
                         label="Input Tracking Save Path",
                         placeholder="e.g., ./tmp/input_tracking",
-                        value="./tmp/input_tracking",
+                        value=MANUAL_TRACES_DIR,
                         info="Specify the directory where user input tracking files should be saved.",
                         interactive=True,
                     )
@@ -1529,30 +1545,51 @@ def create_ui(theme_name="Citrus"):
                         trace_replay_btn = gr.Button("▶️ Replay Selected Trace", variant="primary")
                         trace_delete_btn = gr.Button("🗑️ Delete Selected Trace", variant="stop")
                 
+                # Hidden state to store the full list of dicts from list_input_trace_files
+                trace_file_details_state = gr.State([]) 
+
                 # Connect event handlers
                 input_track_start_btn.click(
                     fn=start_input_tracking_with_context,
                     inputs=[],
-                    outputs=[input_track_status, input_track_stop_btn, trace_file_path]
+                    outputs=[input_track_status, input_track_start_btn, input_track_stop_btn, trace_file_path]
                 )
                 
                 input_track_stop_btn.click(
                     fn=user_input_functions.stop_input_tracking,
                     inputs=[],
-                    outputs=[input_track_status, input_track_stop_btn, trace_file_path]
+                    outputs=[input_track_status, input_track_start_btn, input_track_stop_btn, trace_file_path]
                 )
                 
-                def get_trace_file_path(df, evt: gr.SelectData):
-                    if df is None or len(df) == 0:
+                # Restored functions and handlers that were accidentally deleted
+                def get_trace_file_path(details_list: Optional[List[Dict[str, Any]]], evt: gr.SelectData) -> str:
+                    logger.debug(f"--- DEBUG get_trace_file_path: Event received: evt.index={evt.index}, evt.value='{evt.value}', evt.selected={evt.selected} ---")
+                    if details_list is None:
+                        logger.warning("--- DEBUG get_trace_file_path: details_list is None. Returning empty. ---")
                         return ""
-                    try:
-                        return df.iloc[evt.index[0]]["path"]
-                    except (KeyError, IndexError):
+                    if not evt.index or not isinstance(evt.index, (list, tuple)) or len(evt.index) == 0:
+                        logger.error(f"--- DEBUG get_trace_file_path: evt.index is invalid: {evt.index}. Returning empty. ---")
                         return ""
+                    potential_row_index = evt.index[0]
+                    if not isinstance(potential_row_index, int):
+                        logger.error(f"--- DEBUG get_trace_file_path: Extracted potential_row_index '{potential_row_index}' is not an int. evt.index was: {evt.index}. Returning empty. ---")
+                        return ""
+                    row_index = potential_row_index
+                    if 0 <= row_index < len(details_list):
+                        selected_item_dict = details_list[row_index]
+                        if isinstance(selected_item_dict, dict):
+                            path_val = selected_item_dict.get("path")
+                            logger.info(f"--- DEBUG get_trace_file_path: Selected row index {row_index}, from details_list: {selected_item_dict}, extracted path: {path_val} ---")
+                            return str(path_val) if path_val is not None else ""
+                        else:
+                            logger.warning(f"--- DEBUG get_trace_file_path: Item at index {row_index} in details_list is not a dict: {selected_item_dict} (type: {type(selected_item_dict)}) ---")
+                    else:
+                        logger.warning(f"--- DEBUG get_trace_file_path: Row index {row_index} out of bounds for details_list (0 to {len(details_list) -1}). ---")
+                    return ""
                 
                 trace_files_list.select(
                     fn=get_trace_file_path,
-                    inputs=[trace_files_list],
+                    inputs=[trace_file_details_state],
                     outputs=[trace_file_path]
                 )
                 
@@ -1570,42 +1607,125 @@ def create_ui(theme_name="Citrus"):
                 
                 def refresh_traces():
                     try:
-                        files = user_input_functions.list_input_trace_files(save_input_tracking_path.value)
-                        data = []
-                        for file in files:
-                            data.append({
-                                "path": file["path"],
-                                "Name": file["name"],
-                                "Created": file["created"],
-                                "Size": file["size"],
-                                "Events": file["events"]
-                            })
-                        return data
+                        current_tracking_path = save_input_tracking_path.value
+                        logger.debug(f"--- DEBUG webui.refresh_traces: Path from save_input_tracking_path.value: '{current_tracking_path}' (type: {type(current_tracking_path)}) ---")
+                        if not isinstance(current_tracking_path, str) or not current_tracking_path:
+                            logger.error(f"--- DEBUG webui.refresh_traces: Invalid path: '{current_tracking_path}'. Using default MANAL_TRACES_DIR: '{MANUAL_TRACES_DIR}' ---")
+                            current_tracking_path = MANUAL_TRACES_DIR
+                        files = user_input_functions.list_input_trace_files(current_tracking_path)
+                        logger.debug(f"--- DEBUG webui.refresh_traces: Received files list (count: {len(files)}): {files if len(files) < 5 else str(files)[:200] + '...'} ---")
+                        rows = []
+                        for i, file_dict_item in enumerate(files):
+                            logger.debug(f"--- DEBUG webui.refresh_traces: Processing item {i} from files: {file_dict_item} (type: {type(file_dict_item)}) ---")
+                            if not isinstance(file_dict_item, dict):
+                                logger.warning(f"--- DEBUG webui.refresh_traces: Item {i} is not a dict, skipping. ---")
+                                continue
+                            name_val = file_dict_item.get("Name", "N/A")
+                            if not isinstance(name_val, str):
+                                logger.warning(f"--- DEBUG webui.refresh_traces: 'Name' field is not a string for item {i}: {name_val} (type: {type(name_val)}). Using 'Invalid Name'. ---")
+                                name_val = "Invalid Name"
+                            created_val = file_dict_item.get("Created", "N/A")
+                            size_val = file_dict_item.get("Size", "N/A")
+                            events_val = file_dict_item.get("Events", "N/A")
+                            rows.append([name_val, created_val, size_val, events_val])
+                        logger.debug(f"--- DEBUG webui.refresh_traces: Processed rows for Dataframe (count: {len(rows)}): {rows if len(rows) < 5 else str(rows)[:200] + '...'} ---")
+                        return rows, files
                     except Exception as e:
-                        logger.error(f"Error refreshing traces: {str(e)}")
-                        return [{"Name": f"Error: {str(e)}"}]
+                        import traceback
+                        logger.error(f"Fatal error in refresh_traces: {str(e)}\\n{traceback.format_exc()}")
+                        return ([["Error: " + str(e), "", "", ""]], [])
                         
                 def delete_trace_file(trace_path):
                     if not trace_path:
-                        return "No file selected", []
+                        return "No file selected", gr.update(), gr.update()
                     try:
                         if os.path.exists(trace_path):
                             os.remove(trace_path)
-                            return f"Deleted: {os.path.basename(trace_path)}", refresh_traces()
+                            refreshed_rows, refreshed_details = refresh_traces()
+                            return f"Deleted: {os.path.basename(trace_path)}", refreshed_rows, refreshed_details
                         else:
-                            return "File not found", []
+                            return "File not found", gr.update(), gr.update()
                     except Exception as e:
                         logger.error(f"Error deleting trace file: {str(e)}")
-                        return f"Error: {str(e)}", []
+                        return f"Error: {str(e)}", gr.update(), gr.update()
                 
                 refresh_traces_btn.click(
                     fn=refresh_traces,
                     inputs=[],
-                    outputs=[trace_files_list]
+                    outputs=[trace_files_list, trace_file_details_state]
                 )
-                
+
+                # Wrapper function for replaying traces to ensure context is set.
+                async def replay_trace_wrapper(trace_path_from_ui: str) -> str:
+                    """Wraps the call to user_input_functions.replay_input_trace, ensuring context is set and valid."""
+                    logger.info(f"--- DEBUG replay_trace_wrapper: Called with path: {trace_path_from_ui} ---")
+                    global _global_browser, _global_browser_context
+
+                    # --- Start: Context Initialization Logic (adapted from start_input_tracking_with_context) ---
+                    if _global_browser is None:
+                        logger.info("--- DEBUG replay_trace_wrapper: Global browser not found, initializing for replay... ---")
+                        _global_browser = CustomBrowser(
+                            config=BrowserConfig(
+                                headless=False, 
+                                disable_security=True, 
+                                cdp_url=os.getenv("CHROME_CDP", "http://localhost:9222"), 
+                                chrome_instance_path=os.getenv("CHROME_PATH", None),
+                                extra_chromium_args=[]
+                            )
+                        )
+                        await _global_browser.async_init()
+                    elif not (_global_browser.playwright_browser and _global_browser.playwright_browser.is_connected()):
+                        logger.info("--- DEBUG replay_trace_wrapper: Global browser found but not connected. Re-initializing for replay... ---")
+                        await _global_browser.async_init()
+
+                    should_create_new_context = False
+                    if _global_browser_context is None:
+                        should_create_new_context = True
+                    elif not _global_browser_context.playwright_context or not _global_browser_context.playwright_context.pages:
+                        logger.info("--- DEBUG replay_trace_wrapper: Existing context has no pages or invalid. Will create new one. ---")
+                        should_create_new_context = True
+                    elif _global_browser_context.playwright_context and _global_browser_context.playwright_context._connection.is_closed():
+                        logger.info("--- DEBUG replay_trace_wrapper: Existing context connection closed. Will create new one. ---")
+                        should_create_new_context = True
+
+                    if should_create_new_context:
+                        logger.info("--- DEBUG replay_trace_wrapper: Initializing new browser context for replay. ---")
+                        _global_browser_context = await _global_browser.new_context(
+                            config=AppCustomBrowserContextConfig(
+                                enable_input_tracking=False, 
+                                save_input_tracking_path="",
+                                browser_window_size=BrowserContextWindowSize(width=1280, height=1100)
+                            )
+                        )
+                        if _global_browser_context and _global_browser_context.playwright_context:
+                            try:
+                                page = await _global_browser_context.playwright_context.new_page()
+                                await page.bring_to_front()
+                                # Navigating to a blank page is often sufficient for replay context
+                                await page.goto("about:blank") 
+                                logger.info(f"--- DEBUG replay_trace_wrapper: New context and page ('{page.url}') created for replay.")
+                            except Exception as e:
+                                logger.error(f"--- DEBUG replay_trace_wrapper: Error opening new page for replay context: {e}")
+                                return "Error: Could not prepare browser page for replay."
+                        else:
+                            logger.error("--- DEBUG replay_trace_wrapper: Failed to create a new browser context for replay.")
+                            return "Error: Could not create browser context for replay."
+                    # --- End: Context Initialization Logic ---
+
+                    # At this point, _global_browser_context should be valid and have a page.
+                    if not isinstance(_global_browser_context, CustomBrowserContext) or not _global_browser_context.pages:
+                         logger.error(f"--- DEBUG replay_trace_wrapper: Context is not valid CustomBrowserContext or has no pages after init attempt. Type: {type(_global_browser_context)}")
+                         return "Error: Browser context is not ready for replay after setup."
+
+                    logger.info(f"--- DEBUG replay_trace_wrapper: Setting browser context in user_input_functions. Context type: {type(_global_browser_context)} ---")
+                    user_input_functions.set_browser_context(_global_browser_context)
+                    
+                    status_message = await user_input_functions.replay_input_trace(trace_path_from_ui)
+                    logger.info(f"--- DEBUG replay_trace_wrapper: Replay status: {status_message} ---")
+                    return status_message
+
                 trace_replay_btn.click(
-                    fn=user_input_functions.replay_input_trace,
+                    fn=replay_trace_wrapper, # Changed to the wrapper function
                     inputs=[trace_file_path],
                     outputs=[input_track_status]
                 )
@@ -1613,7 +1733,7 @@ def create_ui(theme_name="Citrus"):
                 trace_delete_btn.click(
                     fn=delete_trace_file,
                     inputs=[trace_file_path],
-                    outputs=[input_track_status, trace_files_list]
+                    outputs=[input_track_status, trace_files_list, trace_file_details_state]
                 )
                 
                 # Automatically refresh the trace files list - simpler approach without _js
@@ -1669,4 +1789,4 @@ app  = demo                            # optional alias, harmless
 
 # --- allow plain `python webui.py` ----------------------------------
 if __name__ == "__main__":              # executed only when you run: python webui.py
-    demo.launch(server_name="127.0.0.1", server_port=7860, debug=True)
+    demo.launch(server_name="127.0.0.1", server_port=7860, debug=True, allowed_paths=["./tmp/input_tracking"])

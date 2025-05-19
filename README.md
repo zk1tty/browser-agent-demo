@@ -80,7 +80,7 @@ uv pip install -r requirements.txt
 ### Step 3: Configure Environment Variables
 1. Copy the `.env.example` file to a new file named `.env` in the project root.
 
-2. Add your API key, and update the Chrome path
+2. Open `.env` file, and add API key and chrome paths
     ```bash
     # LLM API Keys
     OPENAI_API_KEY=your_openai_api_key

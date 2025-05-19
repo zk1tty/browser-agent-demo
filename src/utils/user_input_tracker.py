@@ -22,12 +22,14 @@ class MouseClickEvent(InputEvent):
     x: int
     y: int
     button: str
+    selector: str
     modifiers: List[str] = field(default_factory=list)
 
 @dataclass
 class KeyboardEvent(InputEvent):
     key: str
     code: str
+    selector: str
     modifiers: List[str] = field(default_factory=list)
 
 @dataclass
@@ -46,15 +48,36 @@ class UserInputTracker:
 
     _JS_TEMPLATE = """
     (function() {{
-        const binding = \"{binding}\";
+        if (window.__uit_listeners_attached__) {{
+            console.log('[UIT] Listeners already attached, skipping.');
+            return;
+        }}
+        const binding = "{binding}";
+        function cssPath(el) {{
+          if (!el || el.nodeType !== 1) return '';
+          if (el.id) return '#' + el.id;
+          const parts = [];
+          while (el && el.nodeType === 1 && parts.length < 3) {{       // stop at 3 levels
+            let name = el.localName;
+            if (!name) break;
+            const sibs = Array.from(el.parentNode.children)
+                               .filter(e => e.localName === name);
+            if (sibs.length > 1)
+              name += `:nth-of-type(${{sibs.indexOf(el)+1}})`;
+            parts.unshift(name);
+            el = el.parentNode;
+          }}
+          return parts.join(' > ');
+        }}
         const send = (type, e) => {{
             console.log('[UIT]', type, e.key ?? e.button, e.clientX ?? '', e.clientY ?? '');
+            const sel = cssPath(e.target || document.activeElement);
             if (window[binding]) {{
-                console.log('[UIT] calling python binding', binding);
                 window[binding]({{
                     type,
                     ts: Date.now(),
                     url: location.href,
+                    selector: sel,
                     x:  e.clientX ?? null,
                     y:  e.clientY ?? null,
                     button: e.button ?? null,
@@ -69,6 +92,7 @@ class UserInputTracker:
         }};
         document.addEventListener('mousedown', e => send('mousedown', e), true);
         document.addEventListener('keydown',   e => send('keydown',   e), true);
+        window.__uit_listeners_attached__ = true; // Set the flag
         console.log('[UIT] listeners ready');
     }})();
     """
@@ -95,12 +119,19 @@ class UserInputTracker:
     async def start_tracking(self):
         if self.is_recording:
             return True
+        if not self.page:
+            logger.error("UserInputTracker: Page is not set, cannot start tracking.")
+            return False
+        if not self.context:
+            logger.error("UserInputTracker: Context is not set, cannot start tracking.")
+            return False
+            
         try:
             await self._setup_page(self.page)            # existing page
             self.context.on("page", lambda p: asyncio.create_task(self._setup_page(p)))
-            self._cleanup.append(lambda: self.context.off("page", None))
+            self._cleanup.append(lambda: self.context.off("page", None) if self.context else None)
             self.is_recording = True
-            self.current_url = self.page.url
+            self.current_url = self.page.url if self.page else ""
             logger.info("User‑input tracking started")
             return True
         except Exception:
@@ -154,13 +185,18 @@ class UserInputTracker:
             url = p.get("url", self.current_url)
             mods = [m for m, f in (("alt",p.get("alt")),("ctrl",p.get("ctrl")),("shift",p.get("shift")),("meta",p.get("meta"))) if f]
             typ = p.get("type")
+            sel = str(p.get("selector", ""))
             if typ == "mousedown":
-                button = {0:"left",1:"middle",2:"right"}.get(p.get("button"), "unknown")
-                evt = MouseClickEvent(ts, url, "mouse_click", int(p.get("x",0)), int(p.get("y",0)), button, mods)
+                button_code = p.get("button") 
+                button_name = "unknown"
+                if isinstance(button_code, int): # Ensure button_code is an int before using as dict key
+                    button_name = {0:"left",1:"middle",2:"right"}.get(button_code, "unknown")
+                
+                evt = MouseClickEvent(ts, url, "mouse_click", int(p.get("x",0)), int(p.get("y",0)), button_name, sel, mods)
                 self.events.append(evt)
                 logger.info("🖱️ MouseClick – %s", evt)
             elif typ == "keydown":
-                evt = KeyboardEvent(ts, url, "keyboard_input", str(p.get("key")), str(p.get("code")), mods)
+                evt = KeyboardEvent(ts, url, "keyboard_input", str(p.get("key")), str(p.get("code")), sel, mods)
                 self.events.append(evt)
                 logger.info("⌨️ KeyInput   – %s", evt)
         except Exception:
@@ -188,7 +224,8 @@ class UserInputTracker:
     async def _eval_in_all_frames(self, page, script):
         await self._safe_eval(page.main_frame, script)
         for fr in page.frames:
-            await self._safe_eval(fr, script)
+            if fr != page.main_frame: # Ensure we don't re-evaluate on the main frame
+                await self._safe_eval(fr, script)
 
     async def _safe_eval(self, frame, script):
         try:
@@ -206,3 +243,31 @@ class UserInputTracker:
             "timestamp": time.time(),
             "events": [asdict(e) for e in self.events],
         }, indent=2)
+
+    def export_events_to_jsonl(self) -> str:
+        lines = []
+        last_ts = self.events[0].timestamp if self.events else 0
+        for ev in self.events:
+            dt = int((ev.timestamp - last_ts)*1000)
+            last_ts = ev.timestamp
+            # Create a dictionary from the event, ensuring 'timestamp' is not carried over.
+            line_dict = asdict(ev)
+            # TODO: which file is the reference? 
+            # The problem statement implies 'event_type' should be 'type' in the output.
+            # and 'to_url' should be 'to' for navigation events.
+            # also, 'timestamp' is replaced by 't' (delta time).
+            line_dict["type"] = line_dict.pop("event_type")
+            if "timestamp" in line_dict: # should always be true based on InputEvent
+                del line_dict["timestamp"]
+            if line_dict["type"] == "navigation":
+                if "to_url" in line_dict: # Ensure to_url exists
+                    line_dict["to"] = line_dict.pop("to_url")
+                if "from_url" in line_dict: # from_url is not in the example, remove
+                    del line_dict["from_url"]
+            # The example shows 'mods' instead of 'modifiers' for keyboard/mouse events.
+            if "modifiers" in line_dict:
+                line_dict["mods"] = line_dict.pop("modifiers")
+
+            line_dict["t"] = dt
+            lines.append(json.dumps(line_dict))
+        return "\n".join(lines)

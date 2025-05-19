@@ -2,7 +2,7 @@ import json
 import logging
 import pdb
 import traceback
-from typing import Any, Awaitable, Callable, Dict, Generic, List, Optional, Type, TypeVar
+from typing import Any, Awaitable, Callable, Dict, Generic, List, Optional, Type, TypeVar, Union
 from PIL import Image, ImageDraw, ImageFont
 import os
 import base64
@@ -21,7 +21,6 @@ from browser_use.agent.views import (
     AgentHistoryList,
     AgentOutput,
     AgentSettings,
-    AgentState,
     AgentStepInfo,
     StepMetadata,
     ToolCallingMethod,
@@ -43,18 +42,29 @@ from langchain_core.messages import (
     HumanMessage,
     AIMessage
 )
-from browser_use.browser.views import BrowserState, BrowserStateHistory
+from browser_use.browser.views import BrowserState
 from browser_use.agent.prompts import PlannerPrompt
 
+from pydantic import BaseModel
 from json_repair import repair_json
 from src.utils.agent_state import AgentState
+from src.utils.replayer import TraceReplayer, load_trace, Drift
+from src.utils.user_input_tracker import UserInputTracker
 
 from .custom_message_manager import CustomMessageManager, CustomMessageManagerSettings
-from .custom_views import CustomAgentOutput, CustomAgentStepInfo, CustomAgentState
+from .custom_views import CustomAgentOutput, CustomAgentStepInfo, CustomAgentState as CustomAgentStateType
 
 logger = logging.getLogger(__name__)
 
 Context = TypeVar('Context')
+
+# Define a simple structure for replay task details for clarity
+class ReplayTaskDetails:
+    def __init__(self, mode: str, trace_path: str, speed: float = 1.0, trace_save_path: Optional[str] = None):
+        self.mode = mode
+        self.trace_path = trace_path
+        self.speed = speed
+        self.trace_save_path = trace_save_path # For saving new traces if needed during an operation that might also record
 
 
 class CustomAgent(Agent):
@@ -106,7 +116,7 @@ class CustomAgent(Agent):
             planner_llm: Optional[BaseChatModel] = None,
             planner_interval: int = 1,  # Run planner every N steps
             # Inject state
-            injected_agent_state: Optional[CustomAgentState] = None,
+            injected_agent_state: Optional[CustomAgentStateType] = None,
             context: Context | None = None,
     ):
         super().__init__(
@@ -141,13 +151,19 @@ class CustomAgent(Agent):
             injected_agent_state=None,
             context=context,
         )
-        self.state: CustomAgentState = CustomAgentState()
-        if injected_agent_state is not None:
-            logger.warning("injected_agent_state was provided but is currently not used to initialize CustomAgent's state beyond superclass.")
+        # Initialize or restore CustomAgentState
+        if injected_agent_state is not None and isinstance(injected_agent_state, CustomAgentStateType):
+            self.state: CustomAgentStateType = injected_agent_state
+        else:
+            self.state: CustomAgentStateType = CustomAgentStateType()
+            if injected_agent_state is not None: # Was provided but wrong type
+                 logger.warning("injected_agent_state was provided but is not of type CustomAgentState. Initializing default CustomAgentState.")
+        
         self.add_infos = add_infos
-        self.replay_event_file: Optional[str] = None
+        # self.replay_event_file is removed, handled by task_input in run()
+
         self._message_manager = CustomMessageManager(
-            task=task,
+            task=self.task, # self.task is set by super().__init__
             system_message=self.settings.system_prompt_class(
                 self.available_actions,
                 max_actions_per_step=self.settings.max_actions_per_step,
@@ -160,7 +176,7 @@ class CustomAgent(Agent):
                 available_file_paths=self.settings.available_file_paths,
                 agent_prompt_class=agent_prompt_class
             ),
-            state=self.state.message_manager_state,
+            state=self.state.message_manager_state, # Use state from CustomAgentStateType
         )
 
     ## TODO: Eval the response from LLM
@@ -233,98 +249,30 @@ class CustomAgent(Agent):
             if isinstance(msg, dict):
                 cleaned_messages.append(remove_image_url(msg))
             elif hasattr(msg, 'type') and hasattr(msg, 'content'):
-                # Handle LangChain message objects
-                cleaned_msg = {
-                    'type': msg.type,
-                    'content': msg.content if not isinstance(msg.content, list) else [
-                        remove_image_url(item) for item in msg.content
-                    ]
-                }
-                cleaned_messages.append(cleaned_msg)
+                # Attempt to serialize BaseMessage if it has type and content
+                try:
+                    # Create a dictionary representation
+                    # Ensure content is serializable (especially if it's complex)
+                    content_to_serialize = msg.content
+                    if not isinstance(content_to_serialize, (str, list, dict, int, float, bool, type(None))):
+                        content_to_serialize = str(content_to_serialize) # Fallback to string
+
+                    cleaned_msg_dict = {"type": msg.type, "content": content_to_serialize}
+                    cleaned_messages.append(remove_image_url(cleaned_msg_dict))
+                except Exception as e:
+                    logger.warning(f"Could not serialize message content for type {msg.type}: {e}")
+                    cleaned_messages.append({"type": msg.type, "content": "[unserializable content]"})
             else:
-                # Handle other types
-                cleaned_messages.append(str(msg))
-        
-        # Log both structure and content with JSON indentation
-        # The final result is stored at debug/input_message.txt
-        json_str = json.dumps([{'type': m.get('type') if isinstance(m, dict) else type(m).__name__, 'content': m.get('content') if isinstance(m, dict) else m} for m in cleaned_messages], indent=2)
-        formatted_str = json_str.replace(r'\n', '\n')
-        logger.debug(f"AI_input_messages: {formatted_str}")
+                logger.warning(f"Skipping message of unhandled type for cleaning: {type(msg)}")
 
-        # TODO: This is where the LLM is called
-        ai_message = self.llm.invoke(fixed_input_messages)
-        self.message_manager._add_message_with_tokens(ai_message)
+        model_output_raw = await self._get_model_output(cleaned_messages) # Use cleaned messages
 
-        if hasattr(ai_message, "reasoning_content"):
-            logger.info("🤯 Start Deep Thinking: ")
-            logger.info(ai_message.reasoning_content)
-            logger.info("🤯 End Deep Thinking")
+        # Parse the model output
+        # logger.info(f"Attempting to parse model_output_raw: {model_output_raw}")
+        parsed_output = self._parse_model_output(model_output_raw, self.ActionModel)
+        # self.update_step_info(parsed_output, None) # INTENTIONALLY REMOVED TO FIX LINTER ERROR
 
-        if isinstance(ai_message.content, list):
-            ai_content = ai_message.content[0]
-        else:
-            ai_content = ai_message.content
-
-        try:
-            ai_content = ai_content.replace("```json", "").replace("```", "")
-            ai_content = repair_json(ai_content)
-            parsed_json = json.loads(ai_content)
-            
-            # Debug log the parsed JSON
-            logger.debug(f"===Parsed JSON bf mod===: {json.dumps(parsed_json, indent=2)}")
-            
-            # Ensure parsed_json is a dictionary
-            if not isinstance(parsed_json, dict):
-                raise ValueError(f"Expected dictionary but got {type(parsed_json)}")
-            
-            # Handle switch_tab action by ensuring page_id is present
-            if 'action' in parsed_json and isinstance(parsed_json['action'], list):
-                for action in parsed_json['action']:
-                    if action.get('type') == 'switch_tab':
-                        # Handle both 'index' and 'tab_index' cases
-                        tab_index = action.get('tab_index') or action.get('index')
-                        if tab_index is not None:
-                            # Get current browser state
-                            state = await self.browser_context.get_state()
-                            if state and hasattr(state, 'pages') and len(state.pages) > tab_index:
-                                # Get the page_id from the browser state
-                                action['page_id'] = state.pages[tab_index].page_id
-                                # Ensure tab_index is used consistently
-                                action['tab_index'] = tab_index
-                                if 'index' in action:
-                                    del action['index']
-                            else:
-                                raise ValueError(f"Invalid tab_index/index: {tab_index}")
-                        else:
-                            raise ValueError("Missing tab_index or index in switch_tab action")
-            
-            # Debug log the modified JSON
-            logger.debug(f"===Parsed JSON af mod===:: {json.dumps(parsed_json, indent=2)}")
-            
-            # Ensure current_state is present and properly structured
-            if 'current_state' not in parsed_json:
-                raise ValueError("Missing 'current_state' in response")
-            
-            if not isinstance(parsed_json['current_state'], dict):
-                raise ValueError(f"Expected dictionary for current_state but got {type(parsed_json['current_state'])}")
-            
-            # Create the CustomAgentOutput instance
-            parsed: AgentOutput = self.AgentOutput(**parsed_json)
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            logger.debug(f"Error parsing response. Content: {ai_message.content}")
-            raise ValueError('Could not parse response.')
-
-        if parsed is None:
-            logger.debug(ai_message.content)
-            raise ValueError('Could not parse response.')
-
-        # cut the number of actions to max_actions_per_step if needed
-        if len(parsed.action) > self.settings.max_actions_per_step:
-            parsed.action = parsed.action[: self.settings.max_actions_per_step]
-        self._log_response(parsed)
-        return parsed
+        return parsed_output
 
     async def _run_planner(self) -> Optional[str]:
         """Run the planner to analyze state and suggest next steps"""
@@ -385,112 +333,73 @@ class CustomAgent(Agent):
         return plan
 
     def _summarize_browsing_history(self, max_steps: int = 5, max_chars: int = 1500) -> str:
-        if not self.state.history or not self.state.history.history:
+        if not hasattr(self.state, 'history') or not self.state.history:
             return "No browsing history yet."
-
+        
         summary_lines = []
-        char_count = 0
-
-        # Iterate backwards through history (most recent first)
-        for history_item in reversed(self.state.history.history):
-            if len(summary_lines) >= max_steps:
-                break
-
-            step_num = history_item.metadata.step_number
-            url = history_item.state.url
-            # Get title from state or first tab
-            title = getattr(history_item.state, 'title', '')
-            if hasattr(history_item.state, 'tabs') and history_item.state.tabs:
-                first_tab = history_item.state.tabs[0]
-                tab_title = getattr(first_tab, 'title', '')
-                if tab_title:
-                    title = tab_title
-
-            actions_summary = []
-            errors_summary = []
-
-            if history_item.result:
-                for res in history_item.result:
-                    # Use model_output action description if available and parsed
-                    if history_item.model_output and history_item.model_output.action:
-                         # Simplistic representation, might need more detail
-                        action_type = getattr(history_item.model_output.action, 'action_type', 'unknown')
-                        action_args = getattr(history_item.model_output.action, 'args', {})
-                        action_desc = f"{action_type}({action_args})"
-                        actions_summary.append(action_desc[:100]) # Truncate
-                    # Fallback or augment with extracted content if no model_output action
-                    elif res.extracted_content and not res.error:
-                        action_desc = res.extracted_content.split('\\n')[0] # Take first line
-                        actions_summary.append(action_desc[:100]) # Truncate
-
-                    if res.error:
-                        # Summarize error - Get the most specific part of the error
-                        error_lines = res.error.strip().split('\\n')
-                        error_line = error_lines[-1] if error_lines else "Unknown Error"
-                        errors_summary.append(f"Error: ...{error_line[-150:]}") # Truncate
-
-            # Deduplicate action summaries if they come from both model_output and extracted_content
-            actions_summary = list(dict.fromkeys(actions_summary))
-
-            line = f"Step {step_num}: URL: {url}"
-            if title:
-                 line += f" (Title: {title[:50]}...)" # Truncate title
-            if actions_summary:
-                line += f" | Actions: {'; '.join(actions_summary)}"
-            if errors_summary:
-                line += f" | Results: {'; '.join(errors_summary)}"
-            elif history_item.result: # Check if there were results at all
-                 line += " | Results: OK" # Assume OK if results exist but no errors were logged
-
-            line += "\n"
-
-            if char_count + len(line) > max_chars and summary_lines:
-                 # Stop if adding this line exceeds char limit (and we already have some lines)
-                 summary_lines.append("... (history truncated due to length)\n")
-                 break
-
-            summary_lines.append(line)
-            char_count += len(line)
+        try:
+            # Iterate backwards through history items
+            for history_item in reversed(self.state.history.history):
+                if len(summary_lines) >= max_steps:
+                    break
+                
+                page_title = history_item.state.page_title if history_item.state else "Unknown Page"
+                url = history_item.state.url if history_item.state else "Unknown URL"
+                
+                actions_summary = []
+                if history_item.action:
+                    for action_detail in history_item.action:
+                        # action_detail is ActionDetail, which has .action (BaseNamedAction)
+                        if action_detail.action:
+                            action_str = f"{action_detail.action.name}"
+                            # Add arguments if any, simplified
+                            args_str = json.dumps(action_detail.action.arguments) if action_detail.action.arguments else ""
+                            if args_str and args_str !="{}":
+                                action_str += f"({args_str})"
+                            actions_summary.append(action_str)
+                
+                action_desc = "; ".join(actions_summary) if actions_summary else "No action taken"
+                summary_line = f"- Step {history_item.metadata.step_number}: [{page_title}]({url}) - Action: {action_desc}\\n"
+                
+                if sum(len(s) for s in summary_lines) + len(summary_line) > max_chars and summary_lines:
+                    summary_lines.append("... (history truncated due to length)")
+                    break
+                summary_lines.append(summary_line)
+        except Exception as e:
+            logger.error(f"Error summarizing browsing history: {e}")
+            return "Error summarizing history."
 
         if not summary_lines:
-            return "No recent history processed."
-
-        # Reverse back to chronological order and join
-        return "Browsing History (Recent Steps):\n" + "".join(reversed(summary_lines))
-
-    def set_replay_mode(self, event_file_path: str):
-        """Sets the agent to replay mode using the provided event file."""
-        self.replay_event_file = event_file_path
-        logger.info(f"Agent set to REPLAY MODE. Event log: {self.replay_event_file}")
+            return "No actions recorded in recent history."
+        return "Browsing History (Recent Steps):\\n" + "".join(reversed(summary_lines))
 
     @time_execution_async("--step")
     async def step(self, step_info: Optional[CustomAgentStepInfo] = None) -> None:
-        """Execute one step of the task"""
-        logger.info(f"\n📍 Step {self.state.n_steps}")
-        state = None
-        model_output = None
-        result: list[ActionResult] = []
+        if not step_info: # Should be initialized in run loop
+            logger.error("step_info not provided to CustomAgent.step")
+            return
+
+        model_output = None # Initialize to ensure it's defined for finally
+        state = None # Initialize
+        result = None # Initialize
+        tokens = 0 # Initialize
         step_start_time = time.time()
-        tokens = 0
 
         try:
             state = await self.browser_context.get_state()
             await self._raise_if_stopped_or_paused()
 
-            # Generate history summary before adding state message
             history_summary_str = self._summarize_browsing_history(max_steps=5, max_chars=1500)
 
-            # Pass the summary to add_state_message
             self.message_manager.add_state_message(
                 state,
                 self.state.last_action,
                 self.state.last_result,
                 step_info,
                 self.settings.use_vision,
-                history_summary=history_summary_str # Pass the summary
+                history_summary=history_summary_str
             )
 
-            # Run planner at specified intervals if planner is configured
             if self.settings.planner_llm and self.state.n_steps % self.settings.planner_interval == 0:
                 await self._run_planner()
             input_messages = self.message_manager.get_messages()
@@ -498,7 +407,6 @@ class CustomAgent(Agent):
 
             try:
                 model_output = await self.get_next_action(input_messages)
-                self.update_step_info(model_output, step_info)
                 self.state.n_steps += 1
 
                 if self.register_new_step_callback:
@@ -510,18 +418,15 @@ class CustomAgent(Agent):
                                       self.settings.save_conversation_path_encoding)
 
                 if self.model_name != "deepseek-reasoner":
-                    # remove prev message
                     self.message_manager._remove_state_message_by_index(-1)
                 await self._raise_if_stopped_or_paused()
             except Exception as e:
-                # model call failed, remove last state message from history
                 self.message_manager._remove_state_message_by_index(-1)
                 raise e
 
-            result: list[ActionResult] = await self.multi_act(model_output.action)
+            result = await self.multi_act(model_output.action)
             for ret_ in result:
                 if ret_.extracted_content and "Extracted page" in ret_.extracted_content:
-                    # record every extracted page
                     if ret_.extracted_content[:100] not in self.state.extracted_content:
                         self.state.extracted_content += ret_.extracted_content
             self.state.last_result = result
@@ -531,7 +436,6 @@ class CustomAgent(Agent):
                     self.state.extracted_content = step_info.memory
                 result[-1].extracted_content = self.state.extracted_content
                 logger.info(f"📄 Result: {result[-1].extracted_content}")
-
             self.state.consecutive_failures = 0
 
         except InterruptedError:
@@ -543,19 +447,17 @@ class CustomAgent(Agent):
                 )
             ]
             return
-
         except Exception as e:
             result = await self._handle_step_error(e)
             self.state.last_result = result
-
         finally:
             step_end_time = time.time()
-            actions = [a.model_dump(exclude_unset=True) for a in model_output.action] if model_output else []
+            actions_telemetry = [a.model_dump(exclude_unset=True) for a in model_output.action] if model_output and hasattr(model_output, 'action') and model_output.action else []
             self.telemetry.capture(
                 AgentStepTelemetryEvent(
                     agent_id=self.state.agent_id,
                     step=self.state.n_steps,
-                    actions=actions,
+                    actions=actions_telemetry,
                     consecutive_failures=self.state.consecutive_failures,
                     step_error=[r.error for r in result if r.error] if result else ['No result'],
                 )
@@ -563,7 +465,7 @@ class CustomAgent(Agent):
             if not result:
                 return
 
-            if state:
+            if state and model_output:
                 metadata = StepMetadata(
                     step_number=self.state.n_steps,
                     step_start_time=step_start_time,
@@ -572,131 +474,155 @@ class CustomAgent(Agent):
                 )
                 self._make_history_item(model_output, state, result, metadata)
 
-    async def run(self, max_steps: int = 100) -> AgentHistoryList:
-        """Execute the task with maximum number of steps"""
-        try:
-            self._log_agent_run()
+    # New: modified to accept ReplayTaskDetails at replay mode
+    async def run(self, task_input: Union[str, ReplayTaskDetails], max_steps: int = 100) -> Optional[AgentHistoryList]:
+        """
+        Run the agent to complete the task.
+        If task_input is ReplayTaskDetails, it runs in replay mode.
+        Otherwise, it runs in autonomous mode.
+        """
+        self.state.start_time = time.time()
+        self.state.task_input = task_input
+        self.state.max_steps = max_steps
 
-            # ---- REPLAY MODE LOGIC ----
-            if self.replay_event_file:
-                logger.info(f"🚀 Agent starting in REPLAY MODE. Event log: {self.replay_event_file}")
+        if isinstance(task_input, ReplayTaskDetails) and task_input.mode == "replay":
+            logger.info(f"🚀 Starting agent in REPLAY mode for trace: {task_input.trace_path}")
+            if not self.browser_context:
+                logger.error("Replay mode: Browser context is not available.")
+                return None
+            
+            # Ensure there is a page to replay on
+            if not self.page or self.page.is_closed():
+                logger.info("Replay mode: self.page is not valid. Attempting to get/create a page.")
+                if self.browser_context.playwright_context and self.browser_context.playwright_context.pages:
+                    self.page = self.browser_context.playwright_context.pages[0]
+                    await self.page.bring_to_front()
+                    logger.info(f"Replay mode: Using existing page: {self.page.url}")
+                elif self.browser_context.playwright_context:
+                    self.page = await self.browser_context.playwright_context.new_page()
+                    logger.info(f"Replay mode: Created new page: {self.page.url}")
+                else:
+                    logger.error("Replay mode: playwright_context is None, cannot create or get a page.")
+                    return None
+            
+            try:
+                trace_events = load_trace(task_input.trace_path)
+                if not trace_events:
+                    logger.warning(f"Replay mode: No events found in trace file: {task_input.trace_path}")
+                    return None
                 
-                # Ensure browser_context is CustomBrowserContext and available
-                if not hasattr(self, 'browser_context') or self.browser_context is None:
-                    logger.error("❌ Replay mode error: Browser context is not available.")
-                    self.state.history.add_error("Replay failed: Browser context not available.") # Assumes add_error method exists
-                    # self.state.history.set_done(success=False, message="Replay failed due to missing context.") # if set_done exists
-                    return self.state.history
+                replayer = TraceReplayer(self.page, trace_events)
+                logger.info(f"Replayer initialized. Starting playback at speed: {task_input.speed}x")
+                await replayer.play(speed=task_input.speed)
+                logger.info(f"🏁 Replay finished for trace: {task_input.trace_path}")
+            except Drift as d:
+                logger.error(f"💣 DRIFT DETECTED during replay of {task_input.trace_path}: {d.message}")
+                if d.event:
+                    logger.error(f"   Drift occurred at event: {json.dumps(d.event)}")
+                # Optionally, could save a screenshot or partial history here
+            except FileNotFoundError:
+                logger.error(f"Replay mode: Trace file not found at {task_input.trace_path}")
+            except Exception as e:
+                logger.exception(f"Replay mode: An unexpected error occurred during replay of {task_input.trace_path}")
+            finally:
+                # Decide if browser/context should be closed after replay based on agent settings (e.g., keep_browser_open)
+                # For now, let's assume it follows the general agent cleanup logic if applicable, or stays open.
+                pass
+            return None # Replay mode doesn't return standard agent history
 
-                # Dynamically import CustomBrowserContext to avoid circular import issues if CustomAgent is imported elsewhere
-                from src.browser.custom_context import CustomBrowserContext
-                if isinstance(self.browser_context, CustomBrowserContext):
+        # Autonomous mode logic continues below
+        elif isinstance(task_input, str):
+            if task_input != self.task:
+                logger.info(f"Autonomous run: Task updated from '{self.task}' to '{task_input}'")
+                self.task = task_input
+                self._message_manager.task = self.task # Update message manager's task
+                 # Reset or update initial messages in message manager if task significantly changes
+                self._message_manager.state.history.clear() # Clear previous messages for new task
+                self._message_manager.add_initial_messages(self.task, self.add_infos)
+            elif not isinstance(task_input, str):
+                 logger.warning(f"Autonomous run: task_input is not a string ({type(task_input)}). Using existing task: {self.task}")
+
+
+            logger.info(f"Starting autonomous agent run for task: '{self.task}', max_steps: {max_steps}")
+            
+            # Use the base Agent.run() method for the main loop and its own try/finally for telemetry etc.
+            history: Optional[AgentHistoryList] = await super().run(max_steps=max_steps)
+
+            # After autonomous run, persist UserInputTracker history
+            if self.browser_context and hasattr(self.browser_context, 'input_tracker') and self.browser_context.input_tracker:
+                tracker: UserInputTracker = self.browser_context.input_tracker
+                
+                if tracker.events:
                     try:
-                        replay_successful = await self.browser_context.replay_input_events(self.replay_event_file)
-                        if replay_successful:
-                            logger.info("✅ Event replay completed successfully.")
-                            # Assuming set_done is the correct method for AgentHistoryList based on prior context
-                            # If AgentHistoryList doesn't have set_done, this will need adjustment.
-                            if hasattr(self.state.history, 'set_done'):
-                                self.state.history.set_done(success=True, message=f"Replay of {self.replay_event_file} completed successfully.")
-                            else:
-                                # Fallback: add a general success event/message if set_done is not available
-                                self.state.history.add_event({"type": "replay_status", "status": "success", "message": f"Replay of {self.replay_event_file} completed successfully."})
-                        else:
-                            logger.error(f"❌ Event replay failed for {self.replay_event_file}.")
-                            self.state.history.add_error(f"Replay failed for log: {self.replay_event_file}")
-                            if hasattr(self.state.history, 'set_done'):
-                                self.state.history.set_done(success=False, message=f"Replay of {self.replay_event_file} failed.")
-                            else:
-                                self.state.history.add_event({"type": "replay_status", "status": "failure", "message": f"Replay of {self.replay_event_file} failed."})
+                        trace_content = tracker.export_events_to_jsonl()
+                        
+                        # Determine save path
+                        trace_dir = "./tmp/traces" # TODO: Make this configurable
+                        os.makedirs(trace_dir, exist_ok=True)
+                        
+                        # Default filename with timestamp
+                        default_trace_filename = f"session_{time.strftime('%Y%m%d_%H%M%S')}.trace"
+                        session_trace_path = os.path.join(trace_dir, default_trace_filename)
+
+                        # Allow overriding save path via task_input if it's ReplayTaskDetails (though unlikely for saving *after* autonomous)
+                        # Or if task_input was a dict with this key (more general for future task structures)
+                        final_save_path = session_trace_path
+                        if isinstance(task_input, ReplayTaskDetails) and task_input.trace_save_path:
+                             final_save_path = task_input.trace_save_path
+                        elif isinstance(task_input, dict) and task_input.get('trace_save_path'):
+                             final_save_path = task_input['trace_save_path']
+                        
+                        with open(final_save_path, "w") as f:
+                            f.write(trace_content)
+                        logger.info(f"User input trace saved to {final_save_path}")
+                        
+                        # Optional: Clear events after saving to prevent re-saving or growing memory indefinitely
+                        # tracker.events.clear() 
+                        # logger.info("Cleared tracker events after saving.")
+
                     except Exception as e:
-                        logger.error(f"❌ Exception during event replay: {str(e)}")
-                        self.state.history.add_error(f"Exception during replay: {str(e)}")
-                        if hasattr(self.state.history, 'set_done'):
-                            self.state.history.set_done(success=False, message=f"Replay of {self.replay_event_file} encountered an exception.")
-                        else:
-                             self.state.history.add_event({"type": "replay_status", "status": "exception", "message": f"Replay of {self.replay_event_file} encountered an exception: {str(e)}"})
+                        logger.error(f"Failed to save user input trace: {e}")
+                        traceback.print_exc()
+                elif tracker.is_recording:
+                     logger.info("User input tracker was active, but no events were recorded to save.")
                 else:
-                    logger.error("❌ Replay mode error: Browser context is not a CustomBrowserContext.")
-                    self.state.history.add_error("Replay failed: Incompatible browser context type.")
-                    if hasattr(self.state.history, 'set_done'):
-                        self.state.history.set_done(success=False, message="Replay failed due to context incompatibility.")
-                    else:
-                        self.state.history.add_event({"type": "replay_status", "status": "failure", "message": "Replay failed due to context incompatibility."})
-                
-                return self.state.history # End execution after replay attempt
-
-
-            # Execute initial actions if provided
-            if self.initial_actions:
-                result = await self.multi_act(self.initial_actions, check_for_new_elements=False)
-                self.state.last_result = result
-
-            step_info = CustomAgentStepInfo(
-                task=self.task,
-                add_infos=self.add_infos,
-                step_number=1,
-                max_steps=max_steps,
-                memory="",
-            )
-
-            for step in range(max_steps):
-                # Check if we should stop due to too many failures
-                if self.state.consecutive_failures >= self.settings.max_failures:
-                    logger.error(f'❌ Stopping due to {self.settings.max_failures} consecutive failures')
-                    break
-
-                # Check control flags before each step
-                if self.state.stopped:
-                    logger.info('Agent stopped')
-                    break
-
-                while self.state.paused:
-                    await asyncio.sleep(0.2)  # Small delay to prevent CPU spinning
-                    if self.state.stopped:  # Allow stopping while paused
-                        break
-
-                await self.step(step_info)
-
-                if self.state.history.is_done():
-                    if self.settings.validate_output and step < max_steps - 1:
-                        if not await self._validate_output():
-                            continue
-
-                    await self.log_completion()
-                    break
+                    logger.info("User input tracker was not active or no events to save.")
             else:
-                logger.info("❌ Failed to complete task in maximum steps")
-                if not self.state.extracted_content:
-                    self.state.history.history[-1].result[-1].extracted_content = step_info.memory
+                logger.warning("UserInputTracker not found on browser_context or not initialized. Cannot save trace.")
+            
+            return history
+
+    def _convert_input_messages(self, messages: List[BaseMessage]) -> List[Dict[str, Any]]:
+        converted_messages = []
+        for msg in messages:
+            msg_item = {}
+            if isinstance(msg, HumanMessage):
+                msg_item["role"] = "user"
+                msg_item["content"] = msg.content
+            elif isinstance(msg, AIMessage):
+                msg_item["role"] = "assistant"
+                # Handle tool calls if present
+                if msg.tool_calls:
+                    msg_item["content"] = None # Standard AIMessage content is None if tool_calls are present
+                    msg_item["tool_calls"] = msg.tool_calls
                 else:
-                    self.state.history.history[-1].result[-1].extracted_content = self.state.extracted_content
+                    msg_item["content"] = msg.content
+            elif hasattr(msg, 'role') and hasattr(msg, 'content'): # For generic BaseMessage with role and content
+                 msg_item["role"] = msg.role
+                 msg_item["content"] = msg.content
+            else:
+                # Fallback or skip if message type is not directly convertible
+                logger.warning(f"Skipping message of unhandled type: {type(msg)}")
+                continue
 
-            return self.state.history
+            # Add reasoning_content for tool_code type messages if available
+            if msg_item.get("type") == "tool_code" and isinstance(msg, AIMessage) and hasattr(msg, 'reasoning_content') and msg.reasoning_content:
+                msg_item["reasoning_content"] = msg.reasoning_content
+            converted_messages.append(msg_item)
+        return converted_messages
 
-        finally:
-            self.telemetry.capture(
-                AgentEndTelemetryEvent(
-                    agent_id=self.state.agent_id,
-                    is_done=self.state.history.is_done(),
-                    success=self.state.history.is_successful(),
-                    steps=self.state.n_steps,
-                    max_steps_reached=self.state.n_steps >= max_steps,
-                    errors=self.state.history.errors(),
-                    total_input_tokens=self.state.history.total_input_tokens(),
-                    total_duration_seconds=self.state.history.total_duration_seconds(),
-                )
-            )
-
-            if not self.injected_browser_context:
-                await self.browser_context.close()
-
-            if not self.injected_browser and self.browser:
-                await self.browser.close()
-
-            if self.settings.generate_gif:
-                output_path: str = 'agent_history.gif'
-                if isinstance(self.settings.generate_gif, str):
-                    output_path = self.settings.generate_gif
-
-                create_history_gif(task=self.task, history=self.state.history, output_path=output_path)
+    def _parse_model_output(self, output: str, ActionModel: Type[BaseModel]) -> CustomAgentOutput:
+        # ... existing code ...
+        # ... new implementation ...
+        # ...
+        pass
