@@ -29,17 +29,17 @@ Explore our Showcases at [rebrowse.me](https://rebrowse.me)
 Follow [me on Twitter](https://x.com/n0rizkitty) for the latest updates!
 
 ---
-# Web App
+## Two Agent Modes
 
 <div style="display: flex; flex-direction: column; align-items: flex-start;">
-  <span style="font-size: 1.2em;"><strong>► Run Agent with text prompt</strong></span>
+  <span style="font-size: 1.2em;"><strong>✍🏻 Text prompt</strong></span>
   <ul>
     <li>👍 Robust. </li>
     <li>👎 needs long descriptive prompt. slow.</li>
   </ul>
   <img src="https://raw.githubusercontent.com/zk1tty/rebrowse-app/main/assets/rebrowse-agent-tab.png" alt="Rebrowse Agent Tab" width="100%" style="display: block; margin-bottom: 10px;"/>
 
-  <span style="font-size: 1.2em;"><strong>► Run Agent with recording</strong></span>
+  <span style="font-size: 1.2em;"><strong>▶️ Recording</strong></span>
   <ul>
     <li>👍 Determinictic. 10x fast. 3x Accurate.</li>
     <li>⚠️ AI-powered fall-back is WIP.</li>
