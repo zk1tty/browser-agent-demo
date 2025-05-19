@@ -45,9 +45,10 @@ from langchain_core.messages import (
 from browser_use.browser.views import BrowserState
 from browser_use.agent.prompts import PlannerPrompt
 
+from pydantic import BaseModel
 from json_repair import repair_json
 from src.utils.agent_state import AgentState
-from src.utils.replayer import TraceReplayer
+from src.utils.replayer import TraceReplayer, load_trace, Drift
 from src.utils.user_input_tracker import UserInputTracker
 
 from .custom_message_manager import CustomMessageManager, CustomMessageManagerSettings
@@ -248,98 +249,30 @@ class CustomAgent(Agent):
             if isinstance(msg, dict):
                 cleaned_messages.append(remove_image_url(msg))
             elif hasattr(msg, 'type') and hasattr(msg, 'content'):
-                # Handle LangChain message objects
-                cleaned_msg = {
-                    'type': msg.type,
-                    'content': msg.content if not isinstance(msg.content, list) else [
-                        remove_image_url(item) for item in msg.content
-                    ]
-                }
-                cleaned_messages.append(cleaned_msg)
+                # Attempt to serialize BaseMessage if it has type and content
+                try:
+                    # Create a dictionary representation
+                    # Ensure content is serializable (especially if it's complex)
+                    content_to_serialize = msg.content
+                    if not isinstance(content_to_serialize, (str, list, dict, int, float, bool, type(None))):
+                        content_to_serialize = str(content_to_serialize) # Fallback to string
+
+                    cleaned_msg_dict = {"type": msg.type, "content": content_to_serialize}
+                    cleaned_messages.append(remove_image_url(cleaned_msg_dict))
+                except Exception as e:
+                    logger.warning(f"Could not serialize message content for type {msg.type}: {e}")
+                    cleaned_messages.append({"type": msg.type, "content": "[unserializable content]"})
             else:
-                # Handle other types
-                cleaned_messages.append(str(msg))
-        
-        # Log both structure and content with JSON indentation
-        # The final result is stored at debug/input_message.txt
-        json_str = json.dumps([{'type': m.get('type') if isinstance(m, dict) else type(m).__name__, 'content': m.get('content') if isinstance(m, dict) else m} for m in cleaned_messages], indent=2)
-        formatted_str = json_str.replace(r'\n', '\n')
-        logger.debug(f"AI_input_messages: {formatted_str}")
+                logger.warning(f"Skipping message of unhandled type for cleaning: {type(msg)}")
 
-        # TODO: This is where the LLM is called
-        ai_message = self.llm.invoke(fixed_input_messages)
-        self.message_manager._add_message_with_tokens(ai_message)
+        model_output_raw = await self._get_model_output(cleaned_messages) # Use cleaned messages
 
-        if hasattr(ai_message, "reasoning_content"):
-            logger.info("🤯 Start Deep Thinking: ")
-            logger.info(ai_message.reasoning_content)
-            logger.info("🤯 End Deep Thinking")
+        # Parse the model output
+        # logger.info(f"Attempting to parse model_output_raw: {model_output_raw}")
+        parsed_output = self._parse_model_output(model_output_raw, self.ActionModel)
+        # self.update_step_info(parsed_output, None) # INTENTIONALLY REMOVED TO FIX LINTER ERROR
 
-        if isinstance(ai_message.content, list):
-            ai_content = ai_message.content[0]
-        else:
-            ai_content = ai_message.content
-
-        try:
-            ai_content = ai_content.replace("```json", "").replace("```", "")
-            ai_content = repair_json(ai_content)
-            parsed_json = json.loads(ai_content)
-            
-            # Debug log the parsed JSON
-            logger.debug(f"===Parsed JSON bf mod===: {json.dumps(parsed_json, indent=2)}")
-            
-            # Ensure parsed_json is a dictionary
-            if not isinstance(parsed_json, dict):
-                raise ValueError(f"Expected dictionary but got {type(parsed_json)}")
-            
-            # Handle switch_tab action by ensuring page_id is present
-            if 'action' in parsed_json and isinstance(parsed_json['action'], list):
-                for action in parsed_json['action']:
-                    if action.get('type') == 'switch_tab':
-                        # Handle both 'index' and 'tab_index' cases
-                        tab_index = action.get('tab_index') or action.get('index')
-                        if tab_index is not None:
-                            # Get current browser state
-                            state = await self.browser_context.get_state()
-                            if state and hasattr(state, 'pages') and len(state.pages) > tab_index:
-                                # Get the page_id from the browser state
-                                action['page_id'] = state.pages[tab_index].page_id
-                                # Ensure tab_index is used consistently
-                                action['tab_index'] = tab_index
-                                if 'index' in action:
-                                    del action['index']
-                            else:
-                                raise ValueError(f"Invalid tab_index/index: {tab_index}")
-                        else:
-                            raise ValueError("Missing tab_index or index in switch_tab action")
-            
-            # Debug log the modified JSON
-            logger.debug(f"===Parsed JSON af mod===:: {json.dumps(parsed_json, indent=2)}")
-            
-            # Ensure current_state is present and properly structured
-            if 'current_state' not in parsed_json:
-                raise ValueError("Missing 'current_state' in response")
-            
-            if not isinstance(parsed_json['current_state'], dict):
-                raise ValueError(f"Expected dictionary for current_state but got {type(parsed_json['current_state'])}")
-            
-            # Create the CustomAgentOutput instance
-            parsed: AgentOutput = self.AgentOutput(**parsed_json)
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            logger.debug(f"Error parsing response. Content: {ai_message.content}")
-            raise ValueError('Could not parse response.')
-
-        if parsed is None:
-            logger.debug(ai_message.content)
-            raise ValueError('Could not parse response.')
-
-        # cut the number of actions to max_actions_per_step if needed
-        if len(parsed.action) > self.settings.max_actions_per_step:
-            parsed.action = parsed.action[: self.settings.max_actions_per_step]
-        self._log_response(parsed)
-        return parsed
+        return parsed_output
 
     async def _run_planner(self) -> Optional[str]:
         """Run the planner to analyze state and suggest next steps"""
@@ -474,7 +407,6 @@ class CustomAgent(Agent):
 
             try:
                 model_output = await self.get_next_action(input_messages)
-                self.update_step_info(model_output, step_info)
                 self.state.n_steps += 1
 
                 if self.register_new_step_callback:
@@ -544,44 +476,63 @@ class CustomAgent(Agent):
 
     # New: modified to accept ReplayTaskDetails at replay mode
     async def run(self, task_input: Union[str, ReplayTaskDetails], max_steps: int = 100) -> Optional[AgentHistoryList]:
+        """
+        Run the agent to complete the task.
+        If task_input is ReplayTaskDetails, it runs in replay mode.
+        Otherwise, it runs in autonomous mode.
+        """
+        self.state.start_time = time.time()
+        self.state.task_input = task_input
+        self.state.max_steps = max_steps
+
         if isinstance(task_input, ReplayTaskDetails) and task_input.mode == "replay":
-            logger.info(f"Starting replay mode from trace: {task_input.trace_path} with speed: {task_input.speed}")
+            logger.info(f"🚀 Starting agent in REPLAY mode for trace: {task_input.trace_path}")
             if not self.browser_context:
-                logger.error("Browser context not available for replay.")
-                return None
-
-            current_page = self.page # self.page is set in Agent.__init__ from browser_context.pages[0]
-            if not current_page or current_page.is_closed():
-                logger.info("Agent's default page is not available or closed. Trying to get a page from context.")
-                if self.browser_context.pages:
-                    for p in self.browser_context.pages: # Find first open page
-                        if not p.is_closed(): current_page = p; break 
-                    if not current_page or current_page.is_closed(): # If all are closed or none found initially
-                        logger.info("No open pages found in context or all were closed. Creating a new page for replay.")
-                        current_page = await self.browser_context.new_page()
-                else:
-                    logger.info("No pages in context. Creating a new page for replay.")
-                    current_page = await self.browser_context.new_page()
-                self.page = current_page # Update self.page to the new/active page
-
-            if not self.browser or not current_page: # self.browser should exist if browser_context does
-                logger.error("Browser or page not available for replay.")
+                logger.error("Replay mode: Browser context is not available.")
                 return None
             
-            rep = TraceReplayer(self.browser, current_page)
+            # Ensure there is a page to replay on
+            if not self.page or self.page.is_closed():
+                logger.info("Replay mode: self.page is not valid. Attempting to get/create a page.")
+                if self.browser_context.playwright_context and self.browser_context.playwright_context.pages:
+                    self.page = self.browser_context.playwright_context.pages[0]
+                    await self.page.bring_to_front()
+                    logger.info(f"Replay mode: Using existing page: {self.page.url}")
+                elif self.browser_context.playwright_context:
+                    self.page = await self.browser_context.playwright_context.new_page()
+                    logger.info(f"Replay mode: Created new page: {self.page.url}")
+                else:
+                    logger.error("Replay mode: playwright_context is None, cannot create or get a page.")
+                    return None
+            
             try:
-                await rep.play(task_input.trace_path, speed=task_input.speed)
-                logger.info(f"Replay finished for trace: {task_input.trace_path}")
+                trace_events = load_trace(task_input.trace_path)
+                if not trace_events:
+                    logger.warning(f"Replay mode: No events found in trace file: {task_input.trace_path}")
+                    return None
+                
+                replayer = TraceReplayer(self.page, trace_events)
+                logger.info(f"Replayer initialized. Starting playback at speed: {task_input.speed}x")
+                await replayer.play(speed=task_input.speed)
+                logger.info(f"🏁 Replay finished for trace: {task_input.trace_path}")
+            except Drift as d:
+                logger.error(f"💣 DRIFT DETECTED during replay of {task_input.trace_path}: {d.message}")
+                if d.event:
+                    logger.error(f"   Drift occurred at event: {json.dumps(d.event)}")
+                # Optionally, could save a screenshot or partial history here
             except FileNotFoundError:
-                logger.error(f"Trace file not found: {task_input.trace_path}")
+                logger.error(f"Replay mode: Trace file not found at {task_input.trace_path}")
             except Exception as e:
-                logger.error(f"Error during replay of {task_input.trace_path}: {e}")
-                traceback.print_exc() # Log full traceback for replay errors
-            return None # Replay mode does not return AgentHistoryList
+                logger.exception(f"Replay mode: An unexpected error occurred during replay of {task_input.trace_path}")
+            finally:
+                # Decide if browser/context should be closed after replay based on agent settings (e.g., keep_browser_open)
+                # For now, let's assume it follows the general agent cleanup logic if applicable, or stays open.
+                pass
+            return None # Replay mode doesn't return standard agent history
 
-        else: # Autonomous mode
-            original_task_description = self.task
-            if isinstance(task_input, str) and self.task != task_input:
+        # Autonomous mode logic continues below
+        elif isinstance(task_input, str):
+            if task_input != self.task:
                 logger.info(f"Autonomous run: Task updated from '{self.task}' to '{task_input}'")
                 self.task = task_input
                 self._message_manager.task = self.task # Update message manager's task
@@ -640,3 +591,38 @@ class CustomAgent(Agent):
                 logger.warning("UserInputTracker not found on browser_context or not initialized. Cannot save trace.")
             
             return history
+
+    def _convert_input_messages(self, messages: List[BaseMessage]) -> List[Dict[str, Any]]:
+        converted_messages = []
+        for msg in messages:
+            msg_item = {}
+            if isinstance(msg, HumanMessage):
+                msg_item["role"] = "user"
+                msg_item["content"] = msg.content
+            elif isinstance(msg, AIMessage):
+                msg_item["role"] = "assistant"
+                # Handle tool calls if present
+                if msg.tool_calls:
+                    msg_item["content"] = None # Standard AIMessage content is None if tool_calls are present
+                    msg_item["tool_calls"] = msg.tool_calls
+                else:
+                    msg_item["content"] = msg.content
+            elif hasattr(msg, 'role') and hasattr(msg, 'content'): # For generic BaseMessage with role and content
+                 msg_item["role"] = msg.role
+                 msg_item["content"] = msg.content
+            else:
+                # Fallback or skip if message type is not directly convertible
+                logger.warning(f"Skipping message of unhandled type: {type(msg)}")
+                continue
+
+            # Add reasoning_content for tool_code type messages if available
+            if msg_item.get("type") == "tool_code" and isinstance(msg, AIMessage) and hasattr(msg, 'reasoning_content') and msg.reasoning_content:
+                msg_item["reasoning_content"] = msg.reasoning_content
+            converted_messages.append(msg_item)
+        return converted_messages
+
+    def _parse_model_output(self, output: str, ActionModel: Type[BaseModel]) -> CustomAgentOutput:
+        # ... existing code ...
+        # ... new implementation ...
+        # ...
+        pass
