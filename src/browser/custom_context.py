@@ -3,6 +3,7 @@ import logging
 import os
 import asyncio
 from typing import Optional, Dict, Any
+from urllib.parse import urlparse
 
 from browser_use.browser.browser import Browser
 from browser_use.browser.context import BrowserContext, BrowserContextConfig
@@ -25,6 +26,7 @@ class CustomBrowserContext(BrowserContext):
         self.input_tracker: Optional[UserInputTracker] = None
         self.tracking_enabled = False
         self.tracking_save_path = getattr(config, 'save_input_tracking_path', "./tmp/input_tracking")
+        self.session = None
         
     @property
     def pages(self):
@@ -139,6 +141,37 @@ class CustomBrowserContext(BrowserContext):
             
         return self.input_tracker.export_events_to_json()
             
+    @classmethod
+    def from_existing(cls, pw_context: PlaywrightBrowserContext, browser_instance: "Browser", existing_config: Optional[BrowserContextConfig] = None):
+        obj = cls.__new__(cls)
+        obj.playwright_context = pw_context  # For CustomBrowserContext's own methods
+        obj._ctx = pw_context                # For BrowserContext compatibility (as per plan)
+        
+        obj.browser = browser_instance       # Reference to the parent CustomBrowser
+        
+        if existing_config:
+            obj.config = existing_config
+        else:
+            # Create a default config, or one tailored for reused contexts
+            from src.browser.custom_context_config import CustomBrowserContextConfig as AppCustomBrowserContextConfig # Local import
+            # Use a string literal default if MANUAL_TRACES_DIR is not available here.
+            obj.config = AppCustomBrowserContextConfig(
+                enable_input_tracking=True, # Or False, depending on whether reused contexts should track by default
+                save_input_tracking_path="./tmp/input_tracking",
+                _force_keep_context_alive=True # Explicitly keep reused contexts alive
+            ) 
+
+        obj.input_tracker = None             # Initialize as in __init__
+        obj.tracking_enabled = False         # Initialize to a safe default
+        obj._trace_path = None               # As per plan
+        obj.session = None                   # Initialize session attribute for reused contexts
+        
+        # Initialize tracking_save_path from the config, similar to __init__
+        obj.tracking_save_path = getattr(obj.config, 'save_input_tracking_path', "./tmp/input_tracking")
+
+        logger.info(f"CustomBrowserContext created from existing Playwright context. Tracking save path: {obj.tracking_save_path}")
+        return obj
+
     async def close(self) -> None:
         """Override close to ensure we stop tracking before closing"""
         if self.tracking_enabled and self.input_tracker:
@@ -162,10 +195,8 @@ class CustomBrowserContext(BrowserContext):
             logger.error("No pages available for event replay. Cannot proceed.")
             return False
         
-        first_page = self.pages[0] # Use the first available page for replay
-        
+        # --- Enhanced Page Selection and Initial Navigation ---
         try:
-            # Ensure these are imported; consider moving to top-level if not causing circular deps
             from src.utils.replayer import TraceReplayer, load_trace, Drift 
             
             trace_events = load_trace(events_file_path)
@@ -173,22 +204,50 @@ class CustomBrowserContext(BrowserContext):
                 logger.error(f"No events found in trace file: {events_file_path}")
                 return False
 
-            # Get the URL from the first event to set the initial state
             first_recorded_event = trace_events[0]
-            initial_url = first_recorded_event.get("url")
+            initial_url_from_trace = first_recorded_event.get("url")
+            if not initial_url_from_trace:
+                logger.error("Trace does not contain an initial URL in the first event. Cannot determine starting point.")
+                return False
 
-            if initial_url and first_page.url.rstrip('/') != initial_url.rstrip('/'):
-                logger.info(f"Initial URL of trace ({initial_url}) differs from current page URL ({first_page.url}). Navigating...")
+            target_page = None
+            # Try to find an existing page that matches the initial URL
+            for p in self.pages:
+                # Normalize URLs for comparison (scheme, host, path)
                 try:
-                    await first_page.goto(initial_url, wait_until="networkidle", timeout=15000) # Added timeout
-                    logger.info(f"Successfully navigated to initial URL: {initial_url}")
-                except Exception as nav_exc:
-                    logger.error(f"Failed to navigate to initial URL {initial_url} for replay: {nav_exc}")
-                    return False # Cannot proceed if initial navigation fails
+                    trace_parsed = urlparse(initial_url_from_trace)
+                    page_parsed = urlparse(p.url)
+                    if trace_parsed.scheme == page_parsed.scheme and \
+                       trace_parsed.netloc == page_parsed.netloc and \
+                       trace_parsed.path.rstrip('/') == page_parsed.path.rstrip('/'):
+                        target_page = p
+                        logger.info(f"Found existing page matching initial trace URL: {p.url}. Will use this page.")
+                        await target_page.bring_to_front() # Ensure it's active
+                        break
+                except Exception as e:
+                    logger.warning(f"Error parsing or comparing URL during page selection: {p.url} vs {initial_url_from_trace} - {e}")
             
-            # Correctly instantiate TraceReplayer with page and trace_events
-            replayer = TraceReplayer(page=first_page, trace=trace_events)
-            # Call play with the speed parameter
+            if not target_page:
+                target_page = self.pages[0] # Default to the first page if no match found
+                logger.info(f"No existing page matched initial trace URL. Defaulting to page: {target_page.url}")
+
+            current_page_url_normalized = urlparse(target_page.url).path.rstrip('/')
+            initial_trace_url_normalized = urlparse(initial_url_from_trace).path.rstrip('/')
+            
+            # Navigate if the current URL of the target_page is different from the trace's initial URL
+            if target_page.url.rstrip('/') != initial_url_from_trace.rstrip('/'):
+                logger.info(f"Initial URL of trace ({initial_url_from_trace}) differs from current target page URL ({target_page.url}). Navigating...")
+                try:
+                    # Use domcontentloaded for potentially faster/more reliable navigation if page might be similar
+                    await target_page.goto(initial_url_from_trace, wait_until="domcontentloaded", timeout=20000) # Increased timeout slightly
+                    logger.info(f"Successfully navigated target page to initial URL: {initial_url_from_trace}")
+                except Exception as nav_exc:
+                    logger.error(f"Failed to navigate target page to initial URL {initial_url_from_trace} for replay: {nav_exc}")
+                    return False
+            else:
+                logger.info(f"Target page URL ({target_page.url}) already matches initial trace URL ({initial_url_from_trace}). No navigation needed.")
+            
+            replayer = TraceReplayer(page=target_page, trace=trace_events)
             await replayer.play(speed=speed) 
             logger.info(f"Successfully replayed trace file: {events_file_path}")
             return True

@@ -90,8 +90,19 @@ class TraceReplayer:
         if etype == "navigation":
             expected = ev.get("to")
             actual = self.page.url
-            if actual.rstrip("/") != expected.rstrip("/"):
-                raise Drift(f"URL mismatch: {actual} ≠ {expected}", ev)
+            # --- smart comparison -------------------------------------------------
+            from urllib.parse import urlparse, parse_qs
+            exp, act = urlparse(expected), urlparse(actual)
+            # host & path must match exactly (ignore www vs no‑www for Google)
+            if exp.netloc.replace("www.","") != act.netloc.replace("www.","") or exp.path != act.path:
+                raise Drift(f"URL host/path mismatch: {actual} ≠ {expected}", ev)
+            # compare stable query keys (q, tbm, etc.) – ignore gs_lp, ved, iflsig …
+            KEEP = {"q", "tbm", "hl"}
+            exp_q = {k:v for k,v in parse_qs(exp.query).items() if k in KEEP}
+            act_q = {k:v for k,v in parse_qs(act.query).items() if k in KEEP}
+            if exp_q != act_q:
+                raise Drift(f"URL query mismatch: {act_q} ≠ {exp_q}", ev)
+            return  # navigation ok
         elif etype == "mouse_click":
             sel = ev.get("selector", "")
             btn = ev.get("button", "left")
@@ -102,6 +113,7 @@ class TraceReplayer:
                     visible = False
                 if not visible:
                     raise Drift("Clicked element no longer visible", ev)
+            return
         elif etype == "keyboard_input":
             try:
                 active = await self.page.evaluate("document.activeElement !== null")
@@ -109,6 +121,7 @@ class TraceReplayer:
                 active = True
             if not active:
                 raise Drift("No active element after key press", ev)
+            return
 
 # --------------------------------------------------
 # Convenience CLI entry (optional)

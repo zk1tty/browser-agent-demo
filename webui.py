@@ -551,19 +551,51 @@ async def run_custom_agent(
 
         if _global_browser_context is None:
             logger.info("Global browser context not found for custom agent run, initializing...")
-            # _global_browser is now guaranteed to be CustomBrowser
-            _global_browser_context = await _global_browser.new_context(
-                config=AppCustomBrowserContextConfig( 
-                    trace_path=save_trace_path if save_trace_path else None,
-                    save_recording_path=save_recording_path if save_recording_path else None,
-                    no_viewport=False,
-                    browser_window_size=BrowserContextWindowSize(
-                        width=window_w, height=window_h
-                    ),
-                    enable_input_tracking=enable_input_tracking, 
-                    save_input_tracking_path=save_input_tracking_path
+            if use_own_browser and _global_browser and _global_browser.config and _global_browser.config.cdp_url:
+                try:
+                    logger.info(f"Attempting to reuse existing browser context via CDP: {_global_browser.config.cdp_url}")
+                    _global_browser_context = await _global_browser.reuse_existing_context()
+                    logger.info(f"Successfully reused existing browser context: {_global_browser_context}")
+                    if _global_browser_context and _global_browser_context.playwright_context and not _global_browser_context.playwright_context.pages:
+                        logger.warning("Reused context has no pages. Opening a new blank tab in it for recording.")
+                        page = await _global_browser_context.playwright_context.new_page()
+                        await page.goto("about:blank") # Or a user-configurable start page
+                        await page.bring_to_front()
+                except Exception as e:
+                    logger.error(f"Failed to reuse existing browser context: {e}. Falling back to new context strategy if possible.")
+                    # Ensure _global_browser_context is None so fallback can occur if this path was the primary attempt
+                    _global_browser_context = None 
+                    # Re-raise or handle more gracefully depending on desired UX
+                    # For now, if reuse fails, it will fall through to new context creation or fail if browser not init
+                    pass # Allow to fall through to new context creation if reuse fails badly
+            
+            # If not using CDP or reuse failed and _global_browser_context is still None
+            if _global_browser_context is None:
+                logger.info("Initializing new browser context as not using CDP, or reuse failed.")
+                # Ensure _global_browser is initialized if it wasn't for some reason (should be by prior logic)
+                if not (_global_browser and _global_browser.playwright): # Check if browser is alive
+                     logger.error("Global browser not available for creating new context. Cannot proceed with recording setup.")
+                     return "Status: Error - Browser not available", gr.update(interactive=True), gr.update(interactive=False), None
+
+                _global_browser_context = await _global_browser.new_context(
+                    config=AppCustomBrowserContextConfig(
+                        enable_input_tracking=True, 
+                        save_input_tracking_path=MANUAL_TRACES_DIR, # This comes from global
+                        browser_window_size=BrowserContextWindowSize(width=1280, height=1100) # TODO: Get from UI?
+                    )
                 )
-            )
+                if _global_browser_context and _global_browser_context.playwright_context:
+                    logger.info("New browser context created for recording. Opening a new page in it.")
+                    try:
+                        page = await _global_browser_context.playwright_context.new_page()
+                        await page.bring_to_front()
+                        await page.goto("https://www.google.com") # Default for new context
+                        logger.warning(f"Record Tab: A new browser context and page ('{page.url}') have been created, navigated to Google, and focused. Please use THIS page for recording.")
+                    except Exception as e:
+                        logger.error(f"Error opening, navigating, or focusing new page for new context recording: {e}")
+                else:
+                    logger.error("Failed to create a new browser context properly for recording.")
+                    return "Status: Error - No valid browser context (check logs)", gr.update(interactive=True), gr.update(interactive=False), None
         
         # If agent's own input tracking is enabled and no pages exist, open one.
         if (enable_input_tracking and 
@@ -979,28 +1011,52 @@ async def start_input_tracking_with_context():
             should_create_new_context = True
 
     if should_create_new_context:
-        logger.info("Initializing new browser context for input tracking.")
-        # _global_browser is CustomBrowser, its new_context returns CustomBrowserContext
-        _global_browser_context = await _global_browser.new_context(
-            config=AppCustomBrowserContextConfig(
-                enable_input_tracking=True, 
-                save_input_tracking_path=MANUAL_TRACES_DIR,
-                browser_window_size=BrowserContextWindowSize(width=1280, height=1100)
-            )
-        )
-        # _global_browser_context is CustomBrowserContext, so it has playwright_context
-        if _global_browser_context and _global_browser_context.playwright_context:
-            logger.info("New browser context created for recording. Opening a new page in it.")
+        logger.info("Attempting to initialize global browser context for input tracking.")
+        if _global_browser and _global_browser.config and _global_browser.config.cdp_url:
             try:
-                page = await _global_browser_context.playwright_context.new_page()
-                await page.bring_to_front()
-                await page.goto("https://www.google.com")
-                logger.warning(f"Record Tab: A new browser context and page ('{page.url}') have been created, navigated to Google, and focused. Please use THIS page for recording.")
+                logger.info(f"Reusing existing browser context via CDP: {_global_browser.config.cdp_url}")
+                _global_browser_context = await _global_browser.reuse_existing_context()
+                logger.info(f"Successfully reused existing browser context: {_global_browser_context}")
+                if _global_browser_context and _global_browser_context.playwright_context and not _global_browser_context.playwright_context.pages:
+                    logger.warning("Reused context has no pages. Opening a new blank tab in it for recording.")
+                    page = await _global_browser_context.playwright_context.new_page()
+                    await page.goto("about:blank") # Or a user-configurable start page
+                    await page.bring_to_front()
             except Exception as e:
-                logger.error(f"Error opening, navigating, or focusing new page for recording: {e}")
-        else:
-            logger.error("Failed to create a new browser context properly for recording.")
-            return "Status: Error - No valid browser context (check logs)", gr.update(interactive=True), gr.update(interactive=False), None
+                logger.error(f"Failed to reuse existing browser context: {e}. Falling back to new context strategy if possible.")
+                # Ensure _global_browser_context is None so fallback can occur if this path was the primary attempt
+                _global_browser_context = None 
+                # Re-raise or handle more gracefully depending on desired UX
+                # For now, if reuse fails, it will fall through to new context creation or fail if browser not init
+                pass # Allow to fall through to new context creation if reuse fails badly
+        
+        # If not using CDP or reuse failed and _global_browser_context is still None
+        if _global_browser_context is None:
+            logger.info("Initializing new browser context as not using CDP, or reuse failed.")
+            # Ensure _global_browser is initialized if it wasn't for some reason (should be by prior logic)
+            if not (_global_browser and _global_browser.playwright): # Check if browser is alive
+                 logger.error("Global browser not available for creating new context. Cannot proceed with recording setup.")
+                 return "Status: Error - Browser not available", gr.update(interactive=True), gr.update(interactive=False), None
+
+            _global_browser_context = await _global_browser.new_context(
+                config=AppCustomBrowserContextConfig(
+                    enable_input_tracking=True, 
+                    save_input_tracking_path=MANUAL_TRACES_DIR, # This comes from global
+                    browser_window_size=BrowserContextWindowSize(width=1280, height=1100) # TODO: Get from UI?
+                )
+            )
+            if _global_browser_context and _global_browser_context.playwright_context:
+                logger.info("New browser context created for recording. Opening a new page in it.")
+                try:
+                    page = await _global_browser_context.playwright_context.new_page()
+                    await page.bring_to_front()
+                    await page.goto("https://www.google.com") # Default for new context
+                    logger.warning(f"Record Tab: A new browser context and page ('{page.url}') have been created, navigated to Google, and focused. Please use THIS page for recording.")
+                except Exception as e:
+                    logger.error(f"Error opening, navigating, or focusing new page for new context recording: {e}")
+            else:
+                logger.error("Failed to create a new browser context properly for recording.")
+                return "Status: Error - No valid browser context (check logs)", gr.update(interactive=True), gr.update(interactive=False), None
     
     # DEBUGGING: Print ID of CustomBrowserContext class object used here for isinstance check
     from src.browser.custom_context import CustomBrowserContext as CBC_in_WebUI # Alias for clarity
@@ -1689,27 +1745,47 @@ def create_ui(theme_name="Citrus"):
                         should_create_new_context = True
 
                     if should_create_new_context:
-                        logger.info("--- DEBUG replay_trace_wrapper: Initializing new browser context for replay. ---")
-                        _global_browser_context = await _global_browser.new_context(
-                            config=AppCustomBrowserContextConfig(
-                                enable_input_tracking=False, 
-                                save_input_tracking_path="",
-                                browser_window_size=BrowserContextWindowSize(width=1280, height=1100)
-                            )
-                        )
-                        if _global_browser_context and _global_browser_context.playwright_context:
+                        logger.info(f"--- DEBUG replay_trace_wrapper: Attempting to initialize global browser context for replay. Current _global_browser.config.cdp_url: {_global_browser.config.cdp_url if _global_browser and _global_browser.config else 'N/A'} ---")
+                        if _global_browser and _global_browser.config and _global_browser.config.cdp_url:
                             try:
-                                page = await _global_browser_context.playwright_context.new_page()
-                                await page.bring_to_front()
-                                # Navigating to a blank page is often sufficient for replay context
-                                await page.goto("about:blank") 
-                                logger.info(f"--- DEBUG replay_trace_wrapper: New context and page ('{page.url}') created for replay.")
+                                logger.info(f"--- DEBUG replay_trace_wrapper: Reusing existing browser context via CDP: {_global_browser.config.cdp_url} ---")
+                                _global_browser_context = await _global_browser.reuse_existing_context()
+                                logger.info(f"--- DEBUG replay_trace_wrapper: Successfully reused existing browser context: {_global_browser_context} ---")
+                                if _global_browser_context and _global_browser_context.playwright_context and not _global_browser_context.playwright_context.pages:
+                                    logger.warning("--- DEBUG replay_trace_wrapper: Reused context has no pages. Opening a new blank tab in it for replay. ---")
+                                    page = await _global_browser_context.playwright_context.new_page()
+                                    await page.goto("about:blank") 
+                                    await page.bring_to_front()
                             except Exception as e:
-                                logger.error(f"--- DEBUG replay_trace_wrapper: Error opening new page for replay context: {e}")
-                                return "Error: Could not prepare browser page for replay."
-                        else:
-                            logger.error("--- DEBUG replay_trace_wrapper: Failed to create a new browser context for replay.")
-                            return "Error: Could not create browser context for replay."
+                                logger.error(f"--- DEBUG replay_trace_wrapper: Failed to reuse existing browser context: {e}. Falling back to new context strategy. ---")
+                                _global_browser_context = None # Ensure fallback occurs
+                        
+                        if _global_browser_context is None: # If not using CDP or reuse failed
+                            logger.info("--- DEBUG replay_trace_wrapper: Initializing new browser context for replay (not using CDP or reuse failed). ---")
+                            # Ensure _global_browser is valid before calling new_context
+                            if not (_global_browser and _global_browser.playwright):
+                                logger.error("--- DEBUG replay_trace_wrapper: Global browser not available for creating new context. Cannot proceed with replay setup. ---")
+                                return "Error: Browser not available for replay context."
+                            
+                            _global_browser_context = await _global_browser.new_context(
+                                config=AppCustomBrowserContextConfig(
+                                    enable_input_tracking=False, # No tracking during replay by default
+                                    save_input_tracking_path="",   # No save path needed for replay context
+                                    browser_window_size=BrowserContextWindowSize(width=1280, height=1100) # Consistent window size
+                                )
+                            )
+                            if _global_browser_context and _global_browser_context.playwright_context:
+                                try:
+                                    page = await _global_browser_context.playwright_context.new_page()
+                                    await page.bring_to_front()
+                                    await page.goto("about:blank") 
+                                    logger.info(f"--- DEBUG replay_trace_wrapper: New context and page ('{page.url}') created for replay.")
+                                except Exception as e:
+                                    logger.error(f"--- DEBUG replay_trace_wrapper: Error opening new page for new replay context: {e}")
+                                    return "Error: Could not prepare browser page for replay."
+                            else:
+                                logger.error("--- DEBUG replay_trace_wrapper: Failed to create a new browser context properly for replay.")
+                                return "Error: Could not create browser context for replay."
                     # --- End: Context Initialization Logic ---
 
                     # At this point, _global_browser_context should be valid and have a page.
