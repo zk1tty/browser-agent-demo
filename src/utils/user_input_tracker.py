@@ -1,3 +1,4 @@
+print("USING TRACKER", __file__)
 import json
 import time
 import logging
@@ -23,6 +24,7 @@ class MouseClickEvent(InputEvent):
     y: int
     button: str
     selector: str
+    text: str | None = None
     modifiers: List[str] = field(default_factory=list)
 
 @dataclass
@@ -47,96 +49,180 @@ class UserInputTracker:
     BINDING = "__uit_relay"
 
     _JS_TEMPLATE = """
-    (function() {{
-        if (window.__uit_listeners_attached__) {{
-            console.log('[UIT] Listeners already attached, skipping.');
-            return;
+(function () {{
+  console.log('[UIT SCRIPT] Attempting to run on URL:', location.href, 'Is top window:', window.top === window, 'Timestamp:', Date.now());
+
+  if (window.top !== window) {{
+    console.log('[UIT SCRIPT] EXIT (not top window) on URL:', location.href);
+    return;
+  }}
+
+  // Global guard on window.top itself, persists across navigations in the same tab.
+  if (window.top.__uit_global_listeners_attached) {{
+    console.log('[UIT SCRIPT] GUARDED (globally, listeners already attached by a previous script instance in this tab) on URL:', location.href);
+    return; 
+  }}
+
+  // If we reach here, we are in the top window, and this is the first script instance in this tab to pass the global guard.
+  console.log('[UIT SCRIPT] PASSED GLOBAL GUARD: Marking tab as having listeners and proceeding to setup for URL:', location.href);
+  window.top.__uit_global_listeners_attached = true; // Set the persistent global flag
+
+  const binding = '{binding}'; 
+
+  function actualListenerSetup() {{
+    console.log('[UIT SCRIPT] actualListenerSetup: Called for document of URL:', document.location.href);
+
+    function smartSelector(el) {{
+        // Ensure documentElement is available before trying to use it or querySelector
+        if (!document || !document.documentElement) {{
+            console.warn('[UIT SCRIPT] smartSelector: documentElement not available for URL:', document.location.href);
+            return '';
         }}
-        const binding = "{binding}";
-        function cssPath(el) {{
-          if (!el || el.nodeType !== 1) return '';
-          if (el.id) return '#' + el.id;
-          const parts = [];
-          while (el && el.nodeType === 1 && parts.length < 3) {{       // stop at 3 levels
-            let name = el.localName;
-            if (!name) break;
-            const sibs = Array.from(el.parentNode.children)
-                               .filter(e => e.localName === name);
-            if (sibs.length > 1)
-              name += `:nth-of-type(${{sibs.indexOf(el)+1}})`;
-            parts.unshift(name);
-            el = el.parentNode;
-          }}
-          return parts.join(' > ');
-        }}
-        const send = (type, e) => {{
-            console.log('[UIT]', type, e.key ?? e.button, e.clientX ?? '', e.clientY ?? '');
-            const sel = cssPath(e.target || document.activeElement);
-            if (window[binding]) {{
-                window[binding]({{
-                    type,
-                    ts: Date.now(),
-                    url: location.href,
-                    selector: sel,
-                    x:  e.clientX ?? null,
-                    y:  e.clientY ?? null,
-                    button: e.button ?? null,
-                    key:    e.key    ?? null,
-                    code:   e.code   ?? null,
-                    alt:  e.altKey,
-                    ctrl: e.ctrlKey,
-                    shift:e.shiftKey,
-                    meta: e.metaKey
-                }});
+        if (!el || el.nodeType !== 1) return '';
+        if (el.id) return '#' + CSS.escape(el.id);
+        const attrs = ['data-testid','aria-label','role','name','placeholder'];
+        for (const a of attrs) {{
+            const v = el.getAttribute(a);
+            if (v) {{
+                const sel_val = el.localName + '[' + a + '=\\"' + CSS.escape(v) + '\\"]';
+                try {{ if (document.querySelectorAll(sel_val).length === 1) return sel_val; }} catch (e) {{/*ignore*/}}
             }}
-        }};
-        document.addEventListener('mousedown', e => send('mousedown', e), true);
-        document.addEventListener('keydown',   e => send('keydown',   e), true);
-        window.__uit_listeners_attached__ = true; // Set the flag
-        console.log('[UIT] listeners ready');
-    }})();
-    """
+        }}
+        let path = '', depth = 0, node = el;
+        while (node && node.nodeType === 1 && node !== document.documentElement && depth < 10) {{
+            let seg = node.localName;
+            if (node.parentElement) {{
+                const children = node.parentElement.children;
+                const sib = Array.from(children || []).filter(s => s.localName === seg);
+                if (sib.length > 1) {{
+                    const idx = sib.indexOf(node);
+                    if (idx !== -1) {{ seg += ':nth-of-type(' + (idx + 1) + ')'; }}
+                }}
+            }}
+            path = path ? seg + '>' + path : seg;
+            try {{ if (document.querySelectorAll(path).length === 1) return path; }} catch (e) {{/*ignore*/}}
+            if (!node.parentElement) break; 
+            node = node.parentElement; depth++;
+        }}
+        return path || (el.localName ? el.localName : ''); // Fallback to localName if path is empty
+    }}
+
+    const send = (type, e) => {{
+      if (e.repeat) return;
+
+      const makePayload = () => ({{
+        type, ts: Date.now(), url: document.location.href, // Use document.location.href for current frame
+        selector: smartSelector(e.target || document.activeElement),
+        x: e.clientX ?? null, y: e.clientY ?? null, button: e.button ?? null,
+        key: e.key ?? null, code: e.code ?? null,
+        modifiers: {{alt:e.altKey,ctrl:e.ctrlKey,shift:e.shiftKey,meta:e.metaKey}},
+        text: (type === 'mousedown' && e.target?.innerText) ? (e.target.innerText || '').trim().slice(0,50) : ((e.target?.value || '').trim().slice(0,50) || null)
+      }});
+                                  
+      if (typeof window[binding] === 'function') {{
+        window[binding](makePayload());
+      }} else {{
+        console.warn('[UIT SCRIPT] send: Binding not ready for', type, 'on URL:', document.location.href, 'Retrying in 50ms.');
+        setTimeout(() => {{
+            if (typeof window[binding] === 'function') {{
+                console.log('[UIT SCRIPT] send: Binding ready after delay for', type, 'on URL:', document.location.href);
+                window[binding](makePayload());
+            }} else {{
+                console.error('[UIT SCRIPT] send: Binding STILL not ready after delay for', type, 'on URL:', document.location.href);
+            }}
+        }}, 50);
+      }}
+    }};
+
+    // These listeners are attached to the current document (which is window.top.document here)
+    document.addEventListener('mousedown', e => send('mousedown', e), true);
+    document.addEventListener('keydown',   e => send('keydown',   e), true);
+    console.log('[UIT SCRIPT] actualListenerSetup: Event listeners ATTACHED to document of URL:', document.location.href);
+  }}
+
+  function deferredSetupCaller() {{
+    console.log('[UIT SCRIPT] deferredSetupCaller: Checking binding and document state for URL:', document.location.href);
+    if (typeof window[binding] === 'function') {{
+      console.log('[UIT SCRIPT] Binding found immediately for document:', document.location.href);
+      if (document.readyState === 'loading') {{
+        console.log('[UIT SCRIPT] Document still loading, deferring actualListenerSetup for URL:', document.location.href);
+        document.addEventListener('DOMContentLoaded', actualListenerSetup);
+      }} else {{
+        console.log('[UIT SCRIPT] Document already loaded (or interactive), calling actualListenerSetup for URL:', document.location.href);
+        actualListenerSetup();
+      }}
+    }} else {{
+      console.log('[UIT SCRIPT] Binding not immediately found for document:', document.location.href, '. Will check again in 10ms.');
+      setTimeout(() => {{
+        if (typeof window[binding] === 'function') {{
+          console.log('[UIT SCRIPT] Binding found after 10ms delay for document:', document.location.href);
+          if (document.readyState === 'loading') {{
+            console.log('[UIT SCRIPT] Document still loading (after delay), deferring actualListenerSetup for URL:', document.location.href);
+            document.addEventListener('DOMContentLoaded', actualListenerSetup);
+          }} else {{
+            console.log('[UIT SCRIPT] Document already loaded (or interactive, after delay), calling actualListenerSetup for URL:', document.location.href);
+            actualListenerSetup();
+          }}
+        }} else {{
+          console.error('[UIT SCRIPT] FATAL: Binding still not found after delay for document:', document.location.href, '. Listeners NOT attached.');
+        }}
+      }}, 10);
+    }}
+  }}
+  
+  // Start the setup process
+  deferredSetupCaller();
+
+}})();
+"""
 
     def __init__(self, *, context: Optional[Any] = None, page: Optional[Any] = None, cdp_client: Optional[Any] = None):
         """Init with a Playwright BrowserContext and an initial Page."""
-        # accept both `context` and (legacy) `cdp_client` for backward compatibility
         if context is None and cdp_client is not None:
-            # legacy call pattern: tracker(context=..., page=..., cdp_client=ctx)
-            context = cdp_client  # treat provided CDP client as BrowserContext
+            context = cdp_client 
         self.context = context
         self.page = page
         self.events: List[InputEvent] = []
         self.is_recording = False
         self.current_url: str = ""
         self._cleanup: List[Callable[[], None]] = []
-        # we keep one compiled script ready
         self._script_source = self._JS_TEMPLATE.format(binding=self.BINDING)
-
-    # --------------------------------------------------
-    # Public API
-    # --------------------------------------------------
+        logger.debug(f"USER_INPUT_TRACKER: Formatted _script_source (first 120 chars): {self._script_source[:120]}")
+        logger.debug(f"USER_INPUT_TRACKER: Length of _script_source: {len(self._script_source)}")
 
     async def start_tracking(self):
         if self.is_recording:
-            return True
+            return True # Already recording
         if not self.page:
             logger.error("UserInputTracker: Page is not set, cannot start tracking.")
             return False
-        if not self.context:
+        if not self.context: # self.context here is the Playwright BrowserContext
             logger.error("UserInputTracker: Context is not set, cannot start tracking.")
             return False
             
         try:
-            await self._setup_page(self.page)            # existing page
-            self.context.on("page", lambda p: asyncio.create_task(self._setup_page(p)))
-            self._cleanup.append(lambda: self.context.off("page", None) if self.context else None)
+            # Context-level binding (expose_binding, add_init_script) is now assumed to be handled 
+            # by CustomBrowserContext before this UserInputTracker instance is created or started.
+            # UserInputTracker will focus on page-specific listeners.
+
+            # logger.info("Ensuring page-specific setup in UserInputTracker.start_tracking") # Optional: for debugging
+            
+            await self._setup_page_listeners(self.page) # Setup for the initial self.page
+            
+            # Listen for new pages in the context to set up their listeners
+            # This is now primarily handled by CustomBrowserContext._on_binding_wrapper
+            # Removing the redundant listener setup here to avoid conflicts.
+            # bound_setup_page_listeners = lambda p: asyncio.create_task(self._setup_page_listeners(p))
+            # self.context.on("page", bound_setup_page_listeners)
+            # self._cleanup.append(lambda: self.context.remove_listener("page", bound_setup_page_listeners) if self.context else None)
+
             self.is_recording = True
             self.current_url = self.page.url if self.page else ""
-            logger.info("User‑input tracking started")
+            logger.info("User-input tracking started (listeners configured by UserInputTracker)")
             return True
-        except Exception:
-            logger.exception("Failed to start tracking")
-            await self.stop_tracking()
+        except Exception as e: # Added 'e' to log the specific exception
+            logger.exception(f"Failed to start tracking in UserInputTracker: {e}")
+            await self.stop_tracking() # Attempt to clean up if start fails
             return False
 
     async def stop_tracking(self):
@@ -145,38 +231,59 @@ class UserInputTracker:
         for fn in self._cleanup:
             try:
                 fn()
-            except Exception:
+            except Exception as e_cleanup:
+                logger.debug(f"Error during cleanup function: {e_cleanup}")
                 pass
         self._cleanup.clear()
         self.is_recording = False
-        logger.info("User‑input tracking stopped")
+        logger.info("User-input tracking stopped")
 
-    # --------------------------------------------------
-    # Per‑page setup
-    # --------------------------------------------------
+    # Renamed from _setup_page to reflect its new role
+    async def _setup_page_listeners(self, page):
+        """Set up page-specific listeners. Binding and init script are context-level."""
+        if not page or page.is_closed():
+            logger.warning(f"Attempted to set up listeners on a closed or invalid page: {page.url if page else 'N/A'}")
+            return
 
-    async def _setup_page(self, page):
-        """Expose binding, inject script, handle nav + new frames on one page."""
-        # 1. binding
-        await page.expose_binding(self.BINDING, self._on_dom_event)
+        logger.debug(f"START: Setting up page-specific listeners for page: {page.url}")
 
-        # 2. navigation listener (Playwright-level)
-        page.on("framenavigated", lambda fr: self._on_playwright_nav(page, fr))
-        self._cleanup.append(lambda: page.off("framenavigated", None))
+        # 1. Playwright-level navigation listener (for NavigationEvent)
+        # Use a wrapper to handle potential errors if page closes before lambda runs
+        def playwright_nav_handler(frame):
+            if not page.is_closed():
+                self._on_playwright_nav(page, frame)
+            else:
+                logger.debug(f"Page closed, skipping _on_playwright_nav for url: {frame.url if frame else 'N/A'}")
 
-        # 3. keep script on future navs and run now
-        await page.add_init_script(self._script_source)
-        await self._eval_in_all_frames(page, self._script_source)
+        page.on("framenavigated", playwright_nav_handler)
+        self._cleanup.append(lambda: page.remove_listener("framenavigated", playwright_nav_handler) if not page.is_closed() else None)
 
-        # 4. cover dynamic frames in this page
-        page.on("frameattached", lambda fr: asyncio.create_task(self._safe_eval(fr, self._script_source)))
-        page.on("framenavigated", lambda fr: asyncio.create_task(self._safe_eval(fr, self._script_source)))
-        self._cleanup.append(lambda: page.off("frameattached", None))
+        # 2. Ensure script is evaluated on all existing frames of this page.
+        #    add_init_script on context handles future frames/navigations.
+        logger.debug(f"Evaluating main tracking script in all frames for page: {page.url}")
+        eval_results = await self._eval_in_all_frames(page, self._script_source)
+        logger.debug(f"Finished evaluating main tracking script in all frames for page: {page.url}. Results (per frame): {eval_results}")
 
-    # --------------------------------------------------
+        # 3. Listeners for dynamic frames within this specific page to re-evaluate script.
+        #    (Optional, as context-level add_init_script should cover new frames, but kept for safety)
+        async def safe_eval_on_frame(frame_to_eval):
+            if not frame_to_eval.is_detached():
+                await self._safe_eval(frame_to_eval, self._script_source)
+            else:
+                logger.debug("Frame detached, skipping _safe_eval.")
+        
+        # Store lambdas for removal
+        frame_attached_lambda = lambda fr: asyncio.create_task(safe_eval_on_frame(fr))
+        frame_navigated_lambda = lambda fr: asyncio.create_task(safe_eval_on_frame(fr))
+
+        page.on("frameattached", frame_attached_lambda)
+        page.on("framenavigated", frame_navigated_lambda) # For SPAs or dynamic content loading into frames
+        self._cleanup.append(lambda: page.remove_listener("frameattached", frame_attached_lambda) if not page.is_closed() else None)
+        self._cleanup.append(lambda: page.remove_listener("framenavigated", frame_navigated_lambda) if not page.is_closed() else None)
+
+        logger.debug(f"END: Page-specific listeners setup for page: {page.url}")
+
     # JS → Python bridge
-    # --------------------------------------------------
-
     async def _on_dom_event(self, _src, p: Dict[str, Any]):
         if not self.is_recording:
             return
@@ -186,19 +293,22 @@ class UserInputTracker:
             mods = [m for m, f in (("alt",p.get("alt")),("ctrl",p.get("ctrl")),("shift",p.get("shift")),("meta",p.get("meta"))) if f]
             typ = p.get("type")
             sel = str(p.get("selector", ""))
+            
             if typ == "mousedown":
                 button_code = p.get("button") 
                 button_name = "unknown"
-                if isinstance(button_code, int): # Ensure button_code is an int before using as dict key
+                if isinstance(button_code, int): 
                     button_name = {0:"left",1:"middle",2:"right"}.get(button_code, "unknown")
                 
-                evt = MouseClickEvent(ts, url, "mouse_click", int(p.get("x",0)), int(p.get("y",0)), button_name, sel, mods)
+                txt = p.get("text")
+                                
+                evt = MouseClickEvent(ts, url, "mouse_click", int(p.get("x",0)), int(p.get("y",0)), button_name, sel, txt, mods)
                 self.events.append(evt)
-                logger.info("🖱️ MouseClick – %s", evt)
+                logger.info(f"🖱️ MouseClick, url='{evt.url}', button='{evt.button}'")
             elif typ == "keydown":
                 evt = KeyboardEvent(ts, url, "keyboard_input", str(p.get("key")), str(p.get("code")), sel, mods)
                 self.events.append(evt)
-                logger.info("⌨️ KeyInput   – %s", evt)
+                logger.info(f"⌨️ KeyInput, url='{evt.url}', key='{evt.key}'")
         except Exception:
             logger.exception("Malformed DOM payload: %s", p)
 
@@ -222,16 +332,30 @@ class UserInputTracker:
     # --------------------------------------------------
 
     async def _eval_in_all_frames(self, page, script):
-        await self._safe_eval(page.main_frame, script)
-        for fr in page.frames:
-            if fr != page.main_frame: # Ensure we don't re-evaluate on the main frame
-                await self._safe_eval(fr, script)
+        results = []
+        if not page or page.is_closed():
+            logger.warning("eval_in_all_frames: Page is closed or None.")
+            return [None]
+        try:
+            for frame in page.frames:
+                if not frame.is_detached():
+                    result = await self._safe_eval(frame, script)
+                    results.append(result)
+                else:
+                    logger.debug(f"eval_in_all_frames: Frame {frame.url} is detached, skipping eval.")
+                    results.append("detached_frame")
+            return results
+        except Exception as e:
+            logger.error(f"Error during _eval_in_all_frames for page {page.url}: {e}", exc_info=True)
+            return [f"error: {str(e)}"]
 
     async def _safe_eval(self, frame, script):
         try:
-            await frame.evaluate(script)
-        except Exception:
-            pass
+            result = await frame.evaluate(script)
+            return result
+        except Exception as e:
+            logger.error(f"SAFE_EVAL: Error evaluating script in frame {frame.name} ({frame.url}): {str(e)}", exc_info=False)
+            return f"eval_error: {str(e)}"
 
     # --------------------------------------------------
     # Export
