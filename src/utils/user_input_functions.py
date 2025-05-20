@@ -94,34 +94,36 @@ async def start_input_tracking() -> tuple[str, bool, str]:
         logger.error(f"Error calling _browser_context.start_input_tracking: {str(e)}", exc_info=True)
         return f"Error: {str(e)}", False, ""
 
-async def stop_input_tracking() -> tuple[str, any, any, str | None]:
+async def stop_input_tracking() -> tuple[str, Dict[str, Any], Dict[str, Any], str | None, Dict[str, Any] | None]:
     """
     Stop tracking user input events.
     
     Returns:
-        Tuple for Gradio output: Status message, start_btn_update, stop_btn_update, trace_file_path
+        Tuple for Gradio output: Status message, start_btn_update, stop_btn_update, trace_file_path, trace_info_json
     """
     global _browser_context
     
-    start_btn_update = gr.update(value="Start Recording", interactive=True)
-    stop_btn_update = gr.update(value="Stop Recording", interactive=False)
+    start_btn_update = gr.update(value="▶️ Start Recording", interactive=True)
+    stop_btn_update = gr.update(value="⏹️ Stop Recording", interactive=False)
+    default_trace_info = {"message": "No trace information available."}
 
     if not _browser_context:
-        return "No active browser session.", start_btn_update, stop_btn_update, None
+        return "No active browser session.", start_btn_update, stop_btn_update, None, default_trace_info
     
     try:
         if not isinstance(_browser_context, CustomBrowserContext):
             logger.error(f"Cannot stop tracking: _browser_context is not a CustomBrowserContext: {type(_browser_context)}")
-            return "Internal error: Browser context not configured correctly.", start_btn_update, stop_btn_update, None
+            return "Internal error: Browser context not configured correctly.", start_btn_update, stop_btn_update, None, default_trace_info
 
         filepath = await _browser_context.stop_input_tracking()
         if filepath:
-            return f"Input tracking stopped. Trace saved to: {filepath}", start_btn_update, stop_btn_update, filepath
+            trace_info = get_file_info(filepath)
+            return f"Input tracking stopped. Trace saved to: {filepath}", start_btn_update, stop_btn_update, filepath, trace_info
         else:
-            return "Input tracking stopped. No trace file was saved.", start_btn_update, stop_btn_update, None
+            return "Input tracking stopped. No trace file was saved.", start_btn_update, stop_btn_update, None, default_trace_info
     except Exception as e:
         logger.error(f"Error calling _browser_context.stop_input_tracking: {str(e)}", exc_info=True)
-        return f"Error: {str(e)}", start_btn_update, stop_btn_update, None
+        return f"Error: {str(e)}", start_btn_update, stop_btn_update, None, default_trace_info
 
 def get_file_info(trace_file_path: str) -> dict[str, any]:
     global _browser_context
