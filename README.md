@@ -179,16 +179,17 @@ I needed to make the workflow of agent behaibier by faster and accurate.
 One approach to do this is recoeding and make it repeatable.   
 I introduced our technical architecture in [Architecure](./doc/architecture.md).   
 
-Let me share our technical roadmap.   
+Let me share our technical milestones.   
 
 - [x] Make a workflow traceable 
-- [x] Implement Replay mode with `TraceReplayer` 
-- [ ] Add an eval process to trigger Drift or not.  <- enough flexible
-- [ ] Take a demo video and add here.
+- [x] Implement Replay mode with `Replayer` 
+- [x] Add an eval process to trigger Drift or not.  <- enough flexible
+- [x] Take a demo video and add here.
 - [ ] Measure the accuracy and speed of replay mode in comparison with agent mode
-- [ ] Design `TraceReplayer` memory to handle edge cases
-- [ ] Add multi-thread execution of a single workflow
-- [ ] Add a reasoning process before the workflow is traceable
+- [ ] Add `Analyzer`: a reasoning process to make the process modifiable by test prompt 
+- [ ] Add `Remixer`
+- [ ] Design `Replayer` memory to handle edge cases
+- [ ] Add multi-thread execution of a single workflow on `Replayer`
 
 ### Update on 19th May
 

@@ -11,6 +11,8 @@ Why do we need replay?
 
 <img src="https://raw.githubusercontent.com/zk1tty/rebrowse-app/main/assets/diagram/rebrowse-diagram.png" alt="Rebrowse diagram" width="100%" style="display: block;"/>
 
+<img src="https://raw.githubusercontent.com/zk1tty/rebrowse-app/main/assets/diagram/rebrowse-compose-flow.png" alt="Rebrowse Compose Flow" width="100%" style="display: block;"/>
+
 ## User Jouenry
 
 1. A user open a custom Chrome browser:   
