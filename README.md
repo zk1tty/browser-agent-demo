@@ -17,13 +17,15 @@ Key features of Rebrowse:
 Explore our Showcases at [rebrowse.me](https://rebrowse.me)
 
 ## Watch Demo
-click and watch teh Youtube video.
+Click and watch Youtube videos.
 
 ▶ Lead Gen demo
-[![Luma to LinkedIn DM](https://img.youtube.com/vi/ozXZqgxUJK0/0.jpg)](https://www.youtube.com/watch?v=ozXZqgxUJK0)
+
+<a href="https://www.youtube.com/watch?v=ozXZqgxUJK0"><img src="https://img.youtube.com/vi/ozXZqgxUJK0/0.jpg" alt="Luma to LinkedIn DM" width="full"></a>
 
 ▶ Record and Replay
-[![Replay Demo](./assets/examples/record-replay-demo.png)](https://youtu.be/lPN4lYGrzzQ?si=WHT5kTC1qhkYFihB)
+
+<a href="https://youtu.be/lPN4lYGrzzQ?si=WHT5kTC1qhkYFihB"><img src="./assets/examples/record-replay-demo.png" alt="Replay Demo" width="full"></a>
 
 
 Follow [me on Twitter](https://x.com/n0rizkitty) for the latest updates!
