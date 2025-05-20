@@ -5,13 +5,13 @@
 I will introduce ▶️ Replay mode.   
 Why do we need replay?  
 
+<img src="https://raw.githubusercontent.com/zk1tty/rebrowse-app/main/assets/diagram/rebrowse-compose-flow.png" alt="Rebrowse Compose Flow" width="70%" style="display: block;"/>
+
 ## Architecture
 
 <img src="https://raw.githubusercontent.com/zk1tty/rebrowse-app/main/assets/diagram/browser-use-diagram.png" alt="Browser-use diagram" width="100%" style="display: block;"/>
 
 <img src="https://raw.githubusercontent.com/zk1tty/rebrowse-app/main/assets/diagram/rebrowse-diagram.png" alt="Rebrowse diagram" width="100%" style="display: block;"/>
-
-<img src="https://raw.githubusercontent.com/zk1tty/rebrowse-app/main/assets/diagram/rebrowse-compose-flow.png" alt="Rebrowse Compose Flow" width="100%" style="display: block;"/>
 
 ## User Jouenry
 
