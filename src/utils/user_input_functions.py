@@ -23,7 +23,7 @@ def set_browser_context(ctx):
     """Called by webui after creating or re‑using a CustomBrowserContext."""
     global _browser_context
     _browser_context = ctx
-    logger.info("Browser context set in user_input_functions: %s", ctx)
+    logger.debug("Browser context set in user_input_functions: %s", ctx)
 
 def list_input_trace_files(directory_path_str: str) -> List[dict]:
     """Lists input trace files from the specified directory."""

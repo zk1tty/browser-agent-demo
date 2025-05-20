@@ -73,7 +73,7 @@ class CustomBrowserContext(BrowserContext): # Inherit from BrowserContext
             if self._ctx.pages: # Check if there are any pages in the context
                 try:
                     await self._ctx.pages[0].evaluate("console.log('[CUSTOM_CONTEXT] Test eval after add_init_script OK')")
-                    logger.info("[CUSTOM_CONTEXT] Test eval after add_init_script executed on page 0.")
+                    logger.debug("[CUSTOM_CONTEXT] Test eval after add_init_script executed on page 0.")
                 except Exception as eval_err:
                     logger.error(f"[CUSTOM_CONTEXT] Error during test eval on page 0: {eval_err}")
             else:
@@ -81,7 +81,7 @@ class CustomBrowserContext(BrowserContext): # Inherit from BrowserContext
             
             setattr(self._ctx, "_uit_ready", True) # Mark on Playwright context
             self._dom_bridge_initialized_on_context = True # Mark on CustomBrowserContext instance
-            logger.info("DOM bridge successfully installed on context %s", id(self._ctx))
+            logger.debug("DOM bridge successfully installed on context %s", id(self._ctx))
             
         except Exception as e: # Catch Playwright's Error for already registered or other issues
             if "already registered" in str(e).lower():
@@ -103,13 +103,13 @@ class CustomBrowserContext(BrowserContext): # Inherit from BrowserContext
             return
 
         if not self.input_tracker:
-            logger.info(f"Lazy-initializing UserInputTracker for page: {page.url} (context: {id(self._ctx)})")
+            logger.debug(f"Lazy-initializing UserInputTracker for page: {page.url} (context: {id(self._ctx)})")
             self.input_tracker = UserInputTracker(context=self._ctx, page=page) 
             self.input_tracker.is_recording = True 
             self.input_tracker.current_url = page.url 
             
             if self.input_tracker and self.input_tracker.context and hasattr(self.input_tracker, '_setup_page_listeners'): # Extra guard for linter
-                logger.info(f"CONTEXT_EVENT: Attaching context-level 'page' event listener in CustomBrowserContext for context {id(self._ctx)}")
+                logger.debug(f"CONTEXT_EVENT: Attaching context-level 'page' event listener in CustomBrowserContext for context {id(self._ctx)}")
                 self.input_tracker.context.on("page", 
                     lambda p: asyncio.create_task(self._log_and_setup_page_listeners(p)))
                 
@@ -127,7 +127,7 @@ class CustomBrowserContext(BrowserContext): # Inherit from BrowserContext
 
     # New helper method to log before calling _setup_page_listeners
     async def _log_and_setup_page_listeners(self, page_object):
-        logger.info(f"CONTEXT_EVENT: Context 'page' event fired! Page URL: {page_object.url}, Page Object ID: {id(page_object)}. Calling _setup_page_listeners.")
+        logger.debug(f"CONTEXT_EVENT: Context 'page' event fired! Page URL: {page_object.url}, Page Object ID: {id(page_object)}. Calling _setup_page_listeners.")
         if self.input_tracker: # Ensure input_tracker still exists
             await self.input_tracker._setup_page_listeners(page_object)
         else:
@@ -152,19 +152,19 @@ class CustomBrowserContext(BrowserContext): # Inherit from BrowserContext
             ]
             if content_pages:
                 page_to_use = content_pages[0]
-                logger.info(f"Using existing content page for tracking: {page_to_use.url}")
+                logger.debug(f"Using existing content page for tracking: {page_to_use.url}")
             else:
                 # If no "ideal" content pages, check if there are any pages at all (e.g. only about:blank or chrome://newtab)
                 non_devtools_pages = [p for p in current_pages if p.url and not p.url.startswith("devtools://")]
                 if non_devtools_pages:
                     page_to_use = non_devtools_pages[0]
-                    logger.info(f"No ideal content pages. Using first non-devtools page: {page_to_use.url}")
+                    logger.debug(f"No ideal content pages. Using first non-devtools page: {page_to_use.url}")
                 else:
                     logger.warning("No suitable (non-devtools) pages found. Creating a new page.")
                     page_to_use = await self.new_page()
                     if page_to_use: await page_to_use.goto("about:blank") # Navigate to a blank page
         else:
-            logger.info("No pages in current context. Creating a new page.")
+            logger.debug("No pages in current context. Creating a new page.")
             page_to_use = await self.new_page()
             if page_to_use: await page_to_use.goto("about:blank") # Navigate to a blank page
         
@@ -173,12 +173,12 @@ class CustomBrowserContext(BrowserContext): # Inherit from BrowserContext
             return
 
         if not self.input_tracker: # Initialize UserInputTracker if it doesn't exist
-            logger.info(f"Initializing UserInputTracker for page: {page_to_use.url}")
+            logger.debug(f"Initializing UserInputTracker for page: {page_to_use.url}")
             self.input_tracker = UserInputTracker(context=self._ctx, page=page_to_use)
             # The UserInputTracker.start_tracking() will call _setup_page_listeners for this page_to_use
             await self.input_tracker.start_tracking() 
         elif not self.input_tracker.is_recording: # If tracker exists but not recording
-            logger.info(f"Re-activating recording on existing input tracker. Ensuring it targets page: {page_to_use.url}")
+            logger.debug(f"Re-activating recording on existing input tracker. Ensuring it targets page: {page_to_use.url}")
             self.input_tracker.page = page_to_use # Explicitly update the page on the existing tracker
             self.input_tracker.current_url = page_to_use.url
             await self.input_tracker.start_tracking() # This will call _setup_page_listeners for the (potentially new) page
@@ -194,12 +194,12 @@ class CustomBrowserContext(BrowserContext): # Inherit from BrowserContext
                     logger.error("Input tracker is active, but the determined page_to_use is None. Cannot switch tracker page.")
             else: # self.input_tracker.page == page_to_use
                 if page_to_use: # page_to_use should not be None here if it matches a valid tracker page
-                    logger.info(f"Input tracking is already active and on the correct page: {page_to_use.url}")
+                    logger.debug(f"Input tracking is already active and on the correct page: {page_to_use.url}")
                 else: # Should be an impossible state if self.input_tracker.page was not None
                     logger.error("Input tracking is active, but page_to_use is None and matched self.input_tracker.page. Inconsistent state.")
         
         if page_to_use: # Final log should also be conditional
-            logger.info(f"User input tracking active. Target page: {page_to_use.url}")
+            logger.debug(f"User input tracking active. Target page: {page_to_use.url}")
         # If page_to_use is None here, an error was logged and function returned earlier.
 
     async def stop_input_tracking(self):

@@ -30,10 +30,10 @@ class CustomBrowser(Browser):
         self.playwright = playwright
         
         if self.config.cdp_url:
-            logger.info(f"Attempting to connect to existing browser via CDP: {self.config.cdp_url}")
+            logger.debug(f"Attempting to connect to existing browser via CDP: {self.config.cdp_url}")
             try:
                 self._playwright_browser = await playwright.chromium.connect_over_cdp(self.config.cdp_url)
-                logger.info(f"Successfully connected to browser over CDP: {self._playwright_browser}")
+                logger.debug(f"Successfully connected to browser over CDP: {self._playwright_browser}")
                 # When connecting over CDP, it returns a Browser instance.
                 # We expect at least one context to exist in this user-managed browser.
                 if not self._playwright_browser.contexts:
@@ -59,7 +59,7 @@ class CustomBrowser(Browser):
                     arg for arg in getattr(self.config, 'extra_chromium_args', [])
                     if not arg.startswith('--user-data-dir=')
                 ]
-                logger.info(f"Launching persistent Chrome context with UserDataDir: {user_data_dir} and args: {launch_args}")
+                logger.debug(f"Launching persistent Chrome context with UserDataDir: {user_data_dir} and args: {launch_args}")
                 self._playwright_browser_context_manager = playwright.chromium.launch_persistent_context(
                     user_data_dir=user_data_dir,
                     headless=self.config.headless,
@@ -69,19 +69,19 @@ class CustomBrowser(Browser):
                 self._playwright_browser = self._playwright_browser_context_manager
 
             else:
-                logger.info(f"Launching new Chrome browser instance with args: {self.config.extra_chromium_args}")
+                logger.debug(f"Launching new Chrome browser instance with args: {self.config.extra_chromium_args}")
                 self._playwright_browser = await playwright.chromium.launch(
                     headless=self.config.headless,
                     args=self.config.extra_chromium_args,
                     channel="chrome"
                 )
         else:
-            logger.info(f"Launching new default (Chromium) browser instance with args: {self.config.extra_chromium_args}")
+            logger.debug(f"Launching new default (Chromium) browser instance with args: {self.config.extra_chromium_args}")
             self._playwright_browser = await playwright.chromium.launch(
                 headless=self.config.headless,
                 args=self.config.extra_chromium_args
             )
-        logger.info(f"Playwright browser initialized: {self._playwright_browser}")
+        logger.debug(f"Playwright browser initialized: {self._playwright_browser}")
 
     async def reuse_existing_context(self):
         from playwright.async_api import Browser as PlaywrightBrowser, BrowserContext as PlaywrightBrowserContext
@@ -95,16 +95,16 @@ class CustomBrowser(Browser):
 
         base_ctx_to_wrap = None
         if isinstance(self._playwright_browser, PlaywrightBrowser):
-            logger.info(f"Connected PlaywrightBrowser has {len(self._playwright_browser.contexts)} contexts.")
+            logger.debug(f"Connected PlaywrightBrowser has {len(self._playwright_browser.contexts)} contexts.")
             found_context_with_pages = False
             for i, ctx in enumerate(self._playwright_browser.contexts):
-                logger.info(f"  Context [{i}]: {ctx} has {len(ctx.pages)} pages.")
+                logger.debug(f"  Context [{i}]: {ctx} has {len(ctx.pages)} pages.")
                 for j, page in enumerate(ctx.pages):
-                    logger.info(f"    Page [{j}] URL: {page.url}")
+                    logger.debug(f"    Page [{j}] URL: {page.url}")
                 if not found_context_with_pages and len(ctx.pages) > 0:
                     base_ctx_to_wrap = ctx
                     found_context_with_pages = True
-                    logger.info(f"Selecting Context [{i}] as it has pages.")
+                    logger.debug(f"Selecting Context [{i}] as it has pages.")
             
             if not base_ctx_to_wrap:
                 if self._playwright_browser.contexts: # If contexts exist but all are empty
@@ -116,7 +116,7 @@ class CustomBrowser(Browser):
 
         elif isinstance(self._playwright_browser, PlaywrightBrowserContext):
             base_ctx_to_wrap = self._playwright_browser # It's already a context
-            logger.info(f"Reusing existing PlaywrightBrowserContext directly with {len(base_ctx_to_wrap.pages)} pages. Context: {base_ctx_to_wrap}")
+            logger.debug(f"Reusing existing PlaywrightBrowserContext directly with {len(base_ctx_to_wrap.pages)} pages. Context: {base_ctx_to_wrap}")
         else:
             raise TypeError(f"_playwright_browser is of unexpected type: {type(self._playwright_browser)}")
 
@@ -142,7 +142,7 @@ class CustomBrowser(Browser):
         if isinstance(self._playwright_browser, PlaywrightBrowserContext):
             logger.warning("Creating new context from an existing persistent PlaywrightBrowserContext. This might indicate an architectural issue if multiple isolated contexts are expected from a persistent launch.")
             playwright_context_to_wrap = self._playwright_browser 
-            logger.info(f"Reusing persistent Playwright context: {playwright_context_to_wrap}")
+            logger.debug(f"Reusing persistent Playwright context: {playwright_context_to_wrap}")
 
         elif isinstance(self._playwright_browser, PlaywrightBrowser):
             options = {}
@@ -158,7 +158,7 @@ class CustomBrowser(Browser):
             else:
                 options["no_viewport"] = True
             
-            logger.info(f"Creating new Playwright context with options: {options} from PlaywrightBrowser: {self._playwright_browser}")
+            logger.debug(f"Creating new Playwright context with options: {options} from PlaywrightBrowser: {self._playwright_browser}")
             playwright_context_to_wrap = await self._playwright_browser.new_context(**options)
         else:
             logger.error(f"_playwright_browser is of unexpected type: {type(self._playwright_browser)}. Cannot create new context.")
@@ -179,7 +179,7 @@ class CustomBrowser(Browser):
         if config.trace_path and playwright_context_to_wrap:
             try:
                 await playwright_context_to_wrap.tracing.start(screenshots=True, snapshots=True, sources=True)
-                logger.info(f"Context tracing started. Saving to host path: {config.trace_path}")
+                logger.debug(f"Context tracing started. Saving to host path: {config.trace_path}")
             except Exception as e:
                 logger.error(f"Failed to start tracing: {e}")
 
