@@ -17,14 +17,14 @@ Key features of Rebrowse:
 Explore our Showcases at [rebrowse.me](https://rebrowse.me)
 
 ## Watch Demo
+click and watch teh Youtube video.
 
-- Scenario: Book an Airbnb apartment with specific conditions
-- Environment: Chrome browser with a personal Google account
+▶ Lead Gen demo
+[![Luma to LinkedIn DM](https://img.youtube.com/vi/ozXZqgxUJK0/0.jpg)](https://www.youtube.com/watch?v=ozXZqgxUJK0)
 
+▶ Record and Replay
+[![Replay Demo](./assets/examples/record-replay-demo.png)](https://youtu.be/lPN4lYGrzzQ?si=WHT5kTC1qhkYFihB)
 
-[![Airbnb Booking Demo](https://img.youtube.com/vi/1kQu8oYG-2g/0.jpg)](https://youtu.be/1kQu8oYG-2g)
-
-(Recording demo is coming soon....!!!)
 
 Follow [me on Twitter](https://x.com/n0rizkitty) for the latest updates!
 
