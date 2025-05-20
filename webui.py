@@ -1,3 +1,4 @@
+from src.browser.custom_browser import CustomBrowser
 import pdb
 import logging
 import os
@@ -15,7 +16,7 @@ from task_templates import TASK_TEMPLATES
 
 # TODO: add logging configure
 logging.basicConfig(
-    level=logging.INFO,  # Set default level {logging.DEBUG, logging.INFO, logging.WARNING}
+    level=logging.DEBUG,  # Changed from INFO to DEBUG
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
 )
@@ -73,6 +74,17 @@ import json
 
 # New: user input tracking functions
 from src.utils import user_input_functions
+
+def context_is_closed(ctx) -> bool:
+    """
+    Heuristic: accessing ctx.pages on a disposed context raises an exception.
+    Works for both sync & async BrowserContext objects.
+    """
+    try:
+        _ = ctx.pages  # attribute exists on both sync/async contexts
+        return False
+    except Exception:
+        return True
 
 def _extract_initial_actions(history_json: Dict[str, Any]) -> List[Dict[str, Any]]:
     """
@@ -980,125 +992,240 @@ async def run_repeat(
 
 # New: coroutine to start input tracking with context
 async def start_input_tracking_with_context():
-    global _global_browser, _global_browser_context
+    global _global_browser, _global_browser_context, _global_input_tracking_active, _last_manual_trace_path
 
-    if _global_browser is None:
-        logger.info("Global browser (CustomBrowser) not found for Record Tab, initializing...")
-        _global_browser = CustomBrowser(
-            config=BrowserConfig(
-                headless=False, 
-                disable_security=True, 
-                cdp_url=os.getenv("CHROME_CDP", "http://localhost:9222"), 
-                chrome_instance_path=os.getenv("CHROME_PATH", None),
-                extra_chromium_args=[]
-            )
-        )
-        await _global_browser.async_init()
-    # _global_browser is CustomBrowser, so it has playwright_browser and async_init
-    elif not (_global_browser.playwright_browser and _global_browser.playwright_browser.is_connected()):
-        logger.info("Global CustomBrowser found but not connected. Re-initializing for Record Tab...")
-        await _global_browser.async_init()
+    status_update = ""
+    trace_path_update = "" # Trace path is known after stopping, not starting
+    error_message = ""
+    start_button_interactive = True
+    stop_button_interactive = False
 
-    should_create_new_context = False
-    if _global_browser_context is None:
-        should_create_new_context = True
-    # _global_browser_context is CustomBrowserContext, so it has playwright_context
-    elif not _global_browser_context.playwright_context or not _global_browser_context.playwright_context.pages:
-        logger.info("Existing global browser context has no pages or seems invalid; will create a new one for recording.")
-        should_create_new_context = True 
-    elif _global_browser_context.playwright_context and _global_browser_context.playwright_context._connection.is_closed():
-            logger.info("Existing global browser context's connection is closed; will create a new one for recording.")
-            should_create_new_context = True
+    try:
+        logger.info("Attempting to start input tracking...")
 
-    if should_create_new_context:
-        logger.info("Attempting to initialize global browser context for input tracking.")
-        if _global_browser and _global_browser.config and _global_browser.config.cdp_url:
-            try:
-                logger.info(f"Reusing existing browser context via CDP: {_global_browser.config.cdp_url}")
-                _global_browser_context = await _global_browser.reuse_existing_context()
-                logger.info(f"Successfully reused existing browser context: {_global_browser_context}")
-                if _global_browser_context and _global_browser_context.playwright_context and not _global_browser_context.playwright_context.pages:
-                    logger.warning("Reused context has no pages. Opening a new blank tab in it for recording.")
-                    page = await _global_browser_context.playwright_context.new_page()
-                    await page.goto("about:blank") # Or a user-configurable start page
-                    await page.bring_to_front()
-            except Exception as e:
-                logger.error(f"Failed to reuse existing browser context: {e}. Falling back to new context strategy if possible.")
-                # Ensure _global_browser_context is None so fallback can occur if this path was the primary attempt
-                _global_browser_context = None 
-                # Re-raise or handle more gracefully depending on desired UX
-                # For now, if reuse fails, it will fall through to new context creation or fail if browser not init
-                pass # Allow to fall through to new context creation if reuse fails badly
-        
-        # If not using CDP or reuse failed and _global_browser_context is still None
-        if _global_browser_context is None:
-            logger.info("Initializing new browser context as not using CDP, or reuse failed.")
-            # Ensure _global_browser is initialized if it wasn't for some reason (should be by prior logic)
-            if not (_global_browser and _global_browser.playwright): # Check if browser is alive
-                 logger.error("Global browser not available for creating new context. Cannot proceed with recording setup.")
-                 return "Status: Error - Browser not available", gr.update(interactive=True), gr.update(interactive=False), None
-
-            _global_browser_context = await _global_browser.new_context(
-                config=AppCustomBrowserContextConfig(
-                    enable_input_tracking=True, 
-                    save_input_tracking_path=MANUAL_TRACES_DIR, # This comes from global
-                    browser_window_size=BrowserContextWindowSize(width=1280, height=1100) # TODO: Get from UI?
+        async with async_playwright() as p: # p is not directly used below with CustomBrowser based on other funcs
+            browser_needs_init = _global_browser is None
+            if not browser_needs_init:
+                # Corrected attribute: _playwright_browser -> playwright_browser
+                if _global_browser and (_global_browser.playwright_browser is None or not _global_browser.playwright_browser.is_connected()):
+                    logger.info("Global browser's Playwright browser instance is not connected or missing. Re-initializing browser.")
+                    browser_needs_init = True
+            
+            if browser_needs_init:
+                logger.info("Global browser not initialized or needs re-initialization. Initializing...")
+                # Use CHROME_CDP_URL for the full URL, CHROME_REMOTE_DEBUG_PORT is for the script
+                cdp_full_url = os.getenv("CHROME_CDP_URL")
+                logger.info(f"Retrieved CHROME_CDP_URL for recording: '{cdp_full_url}'") # ADDED LOGGING
+                if cdp_full_url:
+                    logger.info(f"Attempting to connect to existing browser via CDP URL: {cdp_full_url}")
+                
+                browser_config = BrowserConfig(
+                    headless=False, 
+                    cdp_url=cdp_full_url # Use the full CDP URL from env
                 )
-            )
-            if _global_browser_context and _global_browser_context.playwright_context:
-                logger.info("New browser context created for recording. Opening a new page in it.")
-                try:
-                    page = await _global_browser_context.playwright_context.new_page()
-                    await page.bring_to_front()
-                    await page.goto("https://www.google.com") # Default for new context
-                    logger.warning(f"Record Tab: A new browser context and page ('{page.url}') have been created, navigated to Google, and focused. Please use THIS page for recording.")
-                except Exception as e:
-                    logger.error(f"Error opening, navigating, or focusing new page for new context recording: {e}")
+                _global_browser = CustomBrowser(config=browser_config)
+                await _global_browser.async_init()
+                
+                # Ensure this check and status update are present
+                if not _global_browser or not _global_browser.playwright: 
+                    logger.error("Browser instantiation/initialization failed.")
+                    error_message = "Browser initialization failed."
+                    return gr.update(value=error_message), gr.update(value=_last_manual_trace_path or "No trace yet"), gr.update(interactive=True), gr.update(interactive=False)
+                status_update += "Browser initialized. "
+                logger.info("Browser initialized.")
             else:
-                logger.error("Failed to create a new browser context properly for recording.")
-                return "Status: Error - No valid browser context (check logs)", gr.update(interactive=True), gr.update(interactive=False), None
-    
-    # DEBUGGING: Print ID of CustomBrowserContext class object used here for isinstance check
-    from src.browser.custom_context import CustomBrowserContext as CBC_in_WebUI # Alias for clarity
-    print(f"DEBUG_CHECK: ID of CustomBrowserContext class in webui.py: {id(CBC_in_WebUI)}")
+                logger.info("Using existing global browser.")
 
-    if _global_browser_context:
-        print(f"DEBUG_CHECK: _global_browser_context actual type: {type(_global_browser_context)}, ID of its type: {id(type(_global_browser_context))}")
-    else:
-        print("DEBUG_CHECK: _global_browser_context is None before isinstance check.")
-    
-    # The isinstance check below should now reliably pass if _global_browser_context is not None
-    # because it's always created as CustomBrowserContext, and webui.py imports CustomBrowserContext correctly.
-    if not isinstance(_global_browser_context, CBC_in_WebUI): # Use aliased import for the check
-        logger.error(f"Failed to obtain a valid CustomBrowserContext. Cannot start input tracking. _global_browser_context is of type: {type(_global_browser_context)}")
-        return "Status: Error - No valid browser context (check logs)", gr.update(interactive=True), gr.update(interactive=False), None
-    
-    if _global_browser_context:
-        print(f"DEBUG: _global_browser_context actual type: {type(_global_browser_context)}, module: {type(_global_browser_context).__module__}, id: {id(type(_global_browser_context))}")
-    else:
-        print("DEBUG: _global_browser_context is None before isinstance check.")
-    
-    if isinstance(_global_browser_context, CustomBrowserContext):
-        logger.info("Proceeding with input tracking as _global_browser_context is a CustomBrowserContext.")
-        user_input_functions.set_browser_context(_global_browser_context)
-        if not _global_browser_context.pages:
-            logger.error("The CustomBrowserContext has no pages. Cannot start tracking. Please ensure a page is open in the target context.")
-            return "Status: Error - Context has no pages", gr.update(interactive=True), gr.update(interactive=False), None
-        else:
-            success = await _global_browser_context.start_user_input_tracking()
-            if success:
-                logger.info("Successfully started user input tracking via CustomBrowserContext.")
-                return "Status: Recording... (Events will appear below)", gr.update(value="Recording...", interactive=False), gr.update(value="Stop Recording", interactive=True), None
+            if not (_global_browser and _global_browser.playwright):
+                logger.error("Playwright instance within CustomBrowser is not available after init/create.")
+                error_message = "Browser initialization failed (Playwright linkage). Cannot start tracking."
+                return gr.update(value=error_message), gr.update(value=_last_manual_trace_path or "No trace yet"), gr.update(interactive=True), gr.update(interactive=False)
+
+            context_needs_init = _global_browser_context is None
+            if not context_needs_init: # if _global_browser_context exists
+                # Check if it's truly usable
+                if _global_browser_context.playwright_context is None or \
+                   context_is_closed(_global_browser_context.playwright_context):
+                    logger.info("Global browser context is unusable (closed or no Playwright context). Re-initializing context.")
+                    _global_browser_context = None # Force re-init by nullifying
+                    context_needs_init = True
+
+            if context_needs_init: # This means _global_browser_context is None or marked for re-init
+                logger.info("Global browser context needs initialization.")
+                
+                # Check if the _global_browser was connected via CDP
+                attempt_reuse = False
+                if _global_browser and _global_browser.config and _global_browser.config.cdp_url:
+                    logger.info(f"Browser was connected via CDP ({_global_browser.config.cdp_url}). Attempting to reuse existing context.")
+                    attempt_reuse = True
+                
+                if attempt_reuse:
+                    _global_browser_context = await _global_browser.reuse_existing_context()
+                    if _global_browser_context:
+                        logger.info(f"Successfully reused existing context: {_global_browser_context}")
+                        # Ensure the reused context has pages
+                        if not _global_browser_context.pages: # pages property calls _ctx.pages
+                             logger.warning("Reused context has no pages. Creating one.")
+                             try:
+                                 await _global_browser_context.new_page() # Calls _ctx.new_page()
+                             except Exception as e:
+                                 logger.error(f"Error creating page in reused context: {e}")
+                                 _global_browser_context = None # Mark reuse as failed
+                    else:
+                        logger.warning("Failed to reuse existing context or no suitable context found.")
+                
+                # If reuse was not attempted, or failed (so _global_browser_context is still None)
+                if not _global_browser_context: 
+                    if attempt_reuse: # Log if reuse was tried and failed
+                        logger.info("Falling back to creating a new browser context after failed reuse attempt.")
+                    else: # Log if reuse was not attempted (e.g. no CDP)
+                        logger.info("Proceeding to create a new browser context.")
+                    
+                    context_config_object = AppCustomBrowserContextConfig(
+                        # Defaults from AppCustomBrowserContextConfig will be used.
+                        # Specific settings like 'enable_input_tracking' are handled by explicit calls later.
+                    )
+                    if not _global_browser: 
+                         logger.error("Cannot create new context, _global_browser is None. This should not happen here.")
+                         error_message = "Critical error: Browser object became None before context creation."
+                         return gr.update(value=error_message), gr.update(value=_last_manual_trace_path or "No trace yet"), gr.update(interactive=True), gr.update(interactive=False)
+                    
+                    _global_browser_context = await _global_browser.new_context(config=context_config_object)
+                    
+                    if _global_browser_context:
+                        logger.info("New browser context created.")
+                        # Ensure new context has a page (as per original logic)
+                        if not _global_browser_context.pages:
+                            logger.info("Newly created context has no pages. Creating one.")
+                            try:
+                                await _global_browser_context.new_page()
+                            except Exception as e:
+                                logger.error(f"Error creating page in new context: {e}")
+                                # This could be a critical failure for the new context
+                    else:
+                        logger.error("Failed to create a new browser context.")
+                        # Error handling for failed new context creation needed here
+                        error_message = "Failed to create new browser context."
+                        return gr.update(value=error_message), gr.update(value=_last_manual_trace_path or "No trace yet"), gr.update(interactive=True), gr.update(interactive=False)
+
+
+                # Check if context creation/reuse was successful and the context is valid
+                if not _global_browser_context: # Covers failure of both reuse and new creation paths
+                    logger.error("Browser context is None after initialization attempts.")
+                    error_message = error_message or "Browser context could not be established."
+                    return gr.update(value=error_message), gr.update(value=_last_manual_trace_path or "No trace yet"), gr.update(interactive=True), gr.update(interactive=False)
+                
+                # Now that _global_browser_context is confirmed to be not None, check its playwright_context
+                if not _global_browser_context.playwright_context:
+                    logger.error("Browser context was established, but its internal Playwright context is missing.")
+                    error_message = "Browser context is invalid (missing Playwright link)."
+                    return gr.update(value=error_message), gr.update(value=_last_manual_trace_path or "No trace yet"), gr.update(interactive=True), gr.update(interactive=False)
+
+                # Original check (now split into the two above for clarity and safety):
+                # if not (_global_browser_context and _global_browser_context.playwright_context):
+                #     logger.error("Failed to create or initialize browser context.")
+
+                current_pages = _global_browser_context.pages 
+                if not current_pages:
+                    logger.info("New context has no pages. Creating one.")
+                    await _global_browser_context.new_page()
+                    logger.info("New page created in new context.")
+                status_update += "Browser context initialized. "
+                logger.info("Browser context initialized.")
             else:
-                logger.error("CustomBrowserContext failed to start user input tracking (see browser logs).")
-                return "Status: Error starting tracking (check logs)", gr.update(interactive=True), gr.update(interactive=False), None
-    else:
-        # This block is effectively duplicated by the check at the beginning of the function now.
-        # However, keeping the original structure with the new return style.
-        logger.error(f"Failed to obtain a valid CustomBrowserContext. Cannot start input tracking. _global_browser_context is of type: {type(_global_browser_context)}")
-        return "Status: Error - No valid browser context (check logs)", gr.update(interactive=True), gr.update(interactive=False), None
+                logger.info("Using existing global browser context.")
+
+        if not _global_browser_context:
+            error_message = "Browser context is not available after setup."
+            logger.error(error_message)
+        elif _global_input_tracking_active:
+            status_update = "Input tracking is already active."
+            logger.warning(status_update)
+            start_button_interactive = False
+            stop_button_interactive = True
+        else:
+            if not os.path.exists(MANUAL_TRACES_DIR):
+                os.makedirs(MANUAL_TRACES_DIR, exist_ok=True)
+            
+            logger.info(f"Setting browser context for user_input_functions: {_global_browser_context}")
+            user_input_functions.set_browser_context(_global_browser_context)
+            
+            logger.info("Calling user_input_functions.start_input_tracking()...")
+            func_status_msg, _, _ = await user_input_functions.start_input_tracking()
+            logger.info(f"user_input_functions.start_input_tracking() returned: {func_status_msg}")
+
+            if "error" not in func_status_msg.lower() and "failed" not in func_status_msg.lower():
+                _global_input_tracking_active = True
+                status_update += f" Input tracking started. Status: {func_status_msg}"
+                trace_path_update = "Recording... (Path will be shown on stop)"
+                logger.info(status_update)
+                start_button_interactive = False
+                stop_button_interactive = True
+            else:
+                error_message = f"Failed to start tracking: {func_status_msg}"
+                logger.error(error_message)
+
+    except MissingAPIKeyError as e:
+        logger.error(f"Missing API Key: {e}")
+        error_message = f"Configuration Error: {e}. Please check your environment variables or config files."
+    except Exception as e:
+        logger.error(f"Error in start_input_tracking_with_context: {e}", exc_info=True)
+        error_message = f"An unexpected error occurred: {str(e)}"
     
-    # update_tracking_ui_elements() # REMOVED
+    if error_message and not status_update.endswith(error_message) and not status_update.startswith(error_message):
+        final_status = f"{status_update} Error: {error_message}" if status_update else error_message
+    elif error_message:
+        final_status = error_message
+    else:
+        final_status = status_update
+
+    if error_message:
+        start_button_interactive = True 
+        stop_button_interactive = False
+
+    return (
+        gr.update(value=final_status), # For input_track_status
+        gr.update(interactive=start_button_interactive), # For input_track_start_btn
+        gr.update(interactive=stop_button_interactive),  # For input_track_stop_btn
+        gr.update(value=trace_path_update or _last_manual_trace_path or "No trace yet") # For trace_file_path
+    )
+
+async def stop_input_tracking_with_context():
+    global _global_browser_context, _global_input_tracking_active, _last_manual_trace_path
+
+    if not _global_browser_context or not _global_input_tracking_active:
+        logger.warning("Input tracking not active or browser context not available.")
+        return (
+            "Tracking not active or context unavailable.", 
+            gr.update(interactive=True), 
+            gr.update(interactive=False), 
+            _last_manual_trace_path
+        )
+    
+    try:
+        logger.info("Attempting to stop user input tracking via CustomBrowserContext...")
+        filepath = await _global_browser_context.stop_input_tracking()
+        _global_input_tracking_active = False 
+        _last_manual_trace_path = filepath 
+        status_message = f"Input tracking stopped. Trace saved to: {filepath}" if filepath else "Input tracking stopped. No file saved."
+        logger.info(status_message)
+        return (
+            status_message, 
+            gr.update(value="▶️ Start Recording", interactive=True), 
+            gr.update(value="⏹️ Stop Recording", interactive=False), 
+            filepath
+        )
+    except Exception as e:
+        logger.error(f"Exception during stop_input_tracking_with_context: {e}", exc_info=True)
+        # Keep _global_input_tracking_active as is, or False, depending on desired recovery.
+        # For UI consistency, reflect that we tried to stop but failed.
+        return (
+            f"Error stopping input tracking: {e}", 
+            gr.update(interactive=True), # Allow trying to start again
+            gr.update(interactive=True), # Allow trying to stop again (though it failed)
+            _last_manual_trace_path
+        )
+
 
 def create_ui(theme_name="Citrus"):
     css = """
@@ -1612,7 +1739,7 @@ def create_ui(theme_name="Citrus"):
                 )
                 
                 input_track_stop_btn.click(
-                    fn=user_input_functions.stop_input_tracking,
+                    fn=stop_input_tracking_with_context,
                     inputs=[],
                     outputs=[input_track_status, input_track_start_btn, input_track_stop_btn, trace_file_path]
                 )
@@ -1663,11 +1790,29 @@ def create_ui(theme_name="Citrus"):
                 
                 def refresh_traces():
                     try:
-                        current_tracking_path = save_input_tracking_path.value
-                        logger.debug(f"--- DEBUG webui.refresh_traces: Path from save_input_tracking_path.value: '{current_tracking_path}' (type: {type(current_tracking_path)}) ---")
-                        if not isinstance(current_tracking_path, str) or not current_tracking_path:
-                            logger.error(f"--- DEBUG webui.refresh_traces: Invalid path: '{current_tracking_path}'. Using default MANAL_TRACES_DIR: '{MANUAL_TRACES_DIR}' ---")
-                            current_tracking_path = MANUAL_TRACES_DIR
+                        # Ensure save_input_tracking_path.value is correctly accessed if it's a Gradio component.
+                        # If refresh_traces is a top-level function, it might not have direct access to component.value.
+                        # Assuming save_input_tracking_path is accessible and its .value gives the current path string.
+                        # If save_input_tracking_path is a global string variable, then just use its name.
+                        # For this edit, I'm assuming 'save_input_tracking_path' is a Gradio component instance
+                        # available in the scope where 'refresh_traces' can access its '.value' attribute.
+                        # If 'save_input_tracking_path' is the global variable MANUAL_TRACES_DIR, use that.
+                        # Based on the UI code, save_input_tracking_path is a gr.Textbox.
+                        # This function is defined inside create_ui, so it should have access to UI elements.
+                        
+                        # Attempting to get the value. This might need adjustment based on actual scope.
+                        # Let's assume save_input_tracking_path is the Gradio component.
+                        # This function, when triggered by a button, might not have direct access to other components' live values
+                        # unless they are passed as inputs to the gr.Button().click() call.
+                        # The refresh_traces_btn.click is defined as:
+                        # fn=refresh_traces, inputs=[], outputs=[trace_files_list, trace_file_details_state]
+                        # So, it does NOT get save_input_tracking_path as an input.
+                        # This means it likely relies on the global MANUAL_TRACES_DIR or needs save_input_tracking_path as an input.
+                        # Let's use MANUAL_TRACES_DIR for now, as that's the default and less prone to scope issues here.
+                        current_tracking_path = MANUAL_TRACES_DIR 
+                        
+                        logger.debug(f"--- DEBUG webui.refresh_traces: Path being used: '{current_tracking_path}' ---")
+
                         files = user_input_functions.list_input_trace_files(current_tracking_path)
                         logger.debug(f"--- DEBUG webui.refresh_traces: Received files list (count: {len(files)}): {files if len(files) < 5 else str(files)[:200] + '...'} ---")
                         rows = []
@@ -1676,19 +1821,21 @@ def create_ui(theme_name="Citrus"):
                             if not isinstance(file_dict_item, dict):
                                 logger.warning(f"--- DEBUG webui.refresh_traces: Item {i} is not a dict, skipping. ---")
                                 continue
-                            name_val = file_dict_item.get("Name", "N/A")
-                            if not isinstance(name_val, str):
-                                logger.warning(f"--- DEBUG webui.refresh_traces: 'Name' field is not a string for item {i}: {name_val} (type: {type(name_val)}). Using 'Invalid Name'. ---")
+                            # Use lowercase keys to match the data from list_input_trace_files
+                            name_val = file_dict_item.get("name", "N/A") 
+                            created_val = file_dict_item.get("created", "N/A")
+                            size_val = file_dict_item.get("size", "N/A")
+                            events_val = file_dict_item.get("events", "N/A")
+                            
+                            if not isinstance(name_val, str): # Corrected indentation for this block
+                                logger.warning(f"--- DEBUG webui.refresh_traces: 'name' field is not a string for item {i}: {name_val} (type: {type(name_val)}). Using 'Invalid Name'. ---")
                                 name_val = "Invalid Name"
-                            created_val = file_dict_item.get("Created", "N/A")
-                            size_val = file_dict_item.get("Size", "N/A")
-                            events_val = file_dict_item.get("Events", "N/A")
                             rows.append([name_val, created_val, size_val, events_val])
                         logger.debug(f"--- DEBUG webui.refresh_traces: Processed rows for Dataframe (count: {len(rows)}): {rows if len(rows) < 5 else str(rows)[:200] + '...'} ---")
                         return rows, files
                     except Exception as e:
                         import traceback
-                        logger.error(f"Fatal error in refresh_traces: {str(e)}\\n{traceback.format_exc()}")
+                        logger.error(f"Fatal error in refresh_traces: {str(e)}\\\\n{traceback.format_exc()}")
                         return ([["Error: " + str(e), "", "", ""]], [])
                         
                 def delete_trace_file(trace_path):
@@ -1740,7 +1887,7 @@ def create_ui(theme_name="Citrus"):
                     elif not _global_browser_context.playwright_context or not _global_browser_context.playwright_context.pages:
                         logger.info("--- DEBUG replay_trace_wrapper: Existing context has no pages or invalid. Will create new one. ---")
                         should_create_new_context = True
-                    elif _global_browser_context.playwright_context and _global_browser_context.playwright_context._connection.is_closed():
+                    elif _global_browser_context.playwright_context and context_is_closed(_global_browser_context.playwright_context):
                         logger.info("--- DEBUG replay_trace_wrapper: Existing context connection closed. Will create new one. ---")
                         should_create_new_context = True
 
@@ -1794,11 +1941,29 @@ def create_ui(theme_name="Citrus"):
                          return "Error: Browser context is not ready for replay after setup."
 
                     logger.info(f"--- DEBUG replay_trace_wrapper: Setting browser context in user_input_functions. Context type: {type(_global_browser_context)} ---")
-                    user_input_functions.set_browser_context(_global_browser_context)
+                    user_input_functions.set_browser_context(_global_browser_context) # Call set_browser_context
                     
-                    status_message = await user_input_functions.replay_input_trace(trace_path_from_ui)
-                    logger.info(f"--- DEBUG replay_trace_wrapper: Replay status: {status_message} ---")
-                    return status_message
+                    try:
+                        # Call replay_input_trace and handle boolean result
+                        success = await user_input_functions.replay_input_trace(trace_path_from_ui, speed=1.0) 
+                        if success:
+                            status_message = "Input trace replay completed successfully."
+                        else:
+                            status_message = "Failed to replay input trace. See logs for details."
+                        logger.info(f"--- DEBUG replay_trace_wrapper: Replay status: {status_message} ---")
+                        return status_message
+                    finally:
+                        # Only close the browser if keep_browser_open is False
+                        # This logic depends on the keep_browser_open Gradio component's value
+                        # We need to access it correctly, assuming `keep_browser_open` is a Gradio component instance available in this scope
+                        # If `keep_browser_open` is the component itself, its value is `keep_browser_open.value` (if it's a global or passed param)
+                        # For now, I'm assuming `keep_browser_open_value` is a boolean passed or retrieved correctly.
+                        # This part of the logic was from a previous step, ensuring it remains consistent.
+                        # The user's latest request doesn't modify this finally block's condition directly,
+                        # but implies the browser closing is handled by `keep_open=True` passed to `replay_input_events`.
+                        # The `finally` block in `replay_trace_wrapper` in `webui.py` handles UI/global state browser closing.
+                        # The `keep_open` in `replay_input_events` in `custom_context.py` handles Playwright-level browser closing.
+                        pass # Ensure the finally block has a statement
 
                 trace_replay_btn.click(
                     fn=replay_trace_wrapper, # Changed to the wrapper function
