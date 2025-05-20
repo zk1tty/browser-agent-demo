@@ -40,15 +40,61 @@ class TraceReplayer:
         i = 0
         while i < len(self.trace):
             ev = self.trace[i]
-            log_type = ev["type"]
-            log_sel = ev.get("selector", "N/A")
-            log_key = ev.get("key", "N/A")
-            log_x = ev.get("x", "N/A")
-            log_y = ev.get("y", "N/A")
-            log_t = ev.get("t", 0)
-            logger.info(f"➡ {log_type:<12} sel={log_sel} key={log_key} xy=({log_x},{log_y}) t={log_t}")
             
-            await asyncio.sleep(log_t/1000/speed)
+            # New concise and iconic log format
+            log_type = ev["type"]
+            current_event_url = ev.get("url", "N/A") # URL from the event itself
+
+            log_message_elements = []
+
+            if log_type == "mouse_click":
+                log_message_elements.append("🖱️ MouseClick")
+                button_text = ev.get("text")
+                selector = ev.get("selector")
+                
+                if button_text:
+                    log_message_elements.append(f"button_text:\"{button_text}\"")
+                elif selector: 
+                    log_message_elements.append(f"selector:\"{selector}\"")
+                else: 
+                    log_message_elements.append(f"xy:({ev.get('x', 'N/A')},{ev.get('y', 'N/A')})")
+                
+                button_type = ev.get("button", "left")
+                if button_type != "left": # Only show if not default left click
+                    log_message_elements.append(f"button:\"{button_type}\"")
+                log_message_elements.append(f"url='{current_event_url}'")
+            
+            elif log_type == "keyboard_input":
+                log_message_elements.append("⌨️ KeyInput")
+                key_val = ev.get("key")
+                log_message_elements.append(f"key:'{key_val}'")
+                
+                modifiers = ev.get("modifiers")
+                if modifiers: # Only show if modifiers are present
+                    log_message_elements.append(f"mods:{modifiers}")
+                
+                log_message_elements.append(f"url='{current_event_url}'")
+
+            elif log_type == "navigation":
+                log_message_elements.append("🌐 Navigation")
+                to_url = ev.get("to")
+                log_message_elements.append(f"to='{to_url}'")
+
+            else: # Generic fallback for other event types like scroll, viewport_change etc.
+                log_message_elements.append(f"{log_type.replace('_', ' ').title()}")
+                s = ev.get("selector")
+                if s: log_message_elements.append(f"selector:\"{s}\"")
+                if 'x' in ev and 'y' in ev:
+                     log_message_elements.append(f"coords:({ev.get('x')},{ev.get('y')})")
+                log_message_elements.append(f"url='{current_event_url}'")
+
+            logger.info(", ".join(log_message_elements))
+            
+            # Delay logic
+            event_delay_ms = ev.get("t", 0)
+            if event_delay_ms > 10: # Log only if delay is > 10ms (to avoid spamming for 0ms delays)
+                 logger.debug(f"Pausing for {event_delay_ms/1000.0:.3f}s (speed adjusted: {event_delay_ms/1000.0/speed:.3f}s)")
+            await asyncio.sleep(event_delay_ms / 1000.0 / speed)
 
             if ev["type"] == "keyboard_input":
                 consumed = await self._batch_type(i)
@@ -102,7 +148,7 @@ class TraceReplayer:
 
     async def _apply_type(self, sel: Optional[str], text: str, mods: List[str], original_event_for_log: Dict[str, Any]):
         log_sel_for_type = sel or "N/A"
-        logger.info(f"APPLYING BATCH TYPE: '{text}' -> {log_sel_for_type}")
+        logger.debug(f"APPLYING BATCH TYPE: '{text}' -> {log_sel_for_type}")
 
         if sel:
             try:
@@ -120,14 +166,14 @@ class TraceReplayer:
             logger.error(f"Error during page.keyboard.type('{text}'): {e_type.__class__.__name__} - {str(e_type)}")
 
         for m_up in reversed(mapped_mods): await self.page.keyboard.up(m_up)
-        logger.info(f"✅ done BATCH TYPE: '{text}' -> {log_sel_for_type}")
+        logger.debug(f"✅ done BATCH TYPE: '{text}' -> {log_sel_for_type}")
 
     # ------------- apply -------------
 
     async def _apply(self, ev: Dict[str, Any]):
         typ = ev["type"]
         sel_event = ev.get("selector")
-        logger.info(f"APPLYING ACTION: {typ} for sel={sel_event or 'N/A'}, key={ev.get('key','N/A')}") 
+        logger.debug(f"APPLYING ACTION: {typ} for sel={sel_event or 'N/A'}, key={ev.get('key','N/A')}")
 
         if typ == "navigation":
             target = ev["to"]
@@ -137,7 +183,7 @@ class TraceReplayer:
                 except Exception as e:
                     logger.warning("goto timeout %s – continuing for %s", e.__class__.__name__, target)
             await self.page.bring_to_front()
-            logger.info(f"✅ done {typ}: {target}")
+            logger.info(f"NAVIGATED: {target}")
             return
 
         if typ == "mouse_click":
@@ -154,30 +200,29 @@ class TraceReplayer:
                             raise Exception(f"Could not get element handle for selector: {sel_event}")
 
                         await self.page.wait_for_function(
-                            "e => !e.disabled && (!e.hasAttribute('aria-disabled') || e.getAttribute('aria-disabled') === 'false')",
-                            element_handle,
+                            expression="e => !e.disabled && (!e.hasAttribute('aria-disabled') || e.getAttribute('aria-disabled') === 'false')",
+                            arg=element_handle,
+                            polling='raf',
                             timeout=2000
                         )
                         logger.debug(f"Element '{sel_event}' is enabled. Proceeding with click (force=True).")
                         await loc.click(button=self.BTN_MAP.get(btn, "left"), timeout=1500, force=True)
                         self._clicked_with_selector = True
-                        logger.info(f"selector click OK → {sel_event}")
-                        logger.info(f"✅ done {typ}: {sel_event}")
+                        logger.debug(f"selector click OK → {sel_event}")
                         return
                     except Exception as e_click:
                         logger.warning(f"selector click failed for {sel_event}: {e_click.__class__.__name__} ({str(e_click)}) – fallback XY")
             
             log_x, log_y = ev.get("x"), ev.get("y")
-            logger.info(f"fallback XY click {log_x},{log_y}")
+            logger.debug(f"fallback XY click {log_x},{log_y}")
             await self.page.mouse.click(log_x or 0, log_y or 0, button=self.BTN_MAP.get(btn, "left"))
-            logger.info(f"✅ done {typ} (via XY at {log_x},{log_y})")
             return
         
         if typ == "keyboard_input":
             key_to_press = ev["key"]
             modifiers_for_press = ev.get("modifiers", [])
             sel_for_press = ev.get("selector")
-            logger.info(f"APPLYING SINGLE KEY PRESS: '{key_to_press}' (mods: {modifiers_for_press}) -> {sel_for_press or 'no specific target'}")
+            logger.debug(f"APPLYING SINGLE KEY PRESS: '{key_to_press}' (mods: {modifiers_for_press}) -> {sel_for_press or 'no specific target'}")
 
             if sel_for_press:
                 try:
@@ -198,10 +243,10 @@ class TraceReplayer:
                  logger.error(f"Error during page.keyboard.press('{key_to_press}'): {e_press.__class__.__name__} - {str(e_press)}")
 
             for m_up_key in reversed(mapped_mods_press): await self.page.keyboard.up(m_up_key)
-            logger.info(f"✅ done SINGLE KEY PRESS: '{key_to_press}' -> {sel_for_press or 'no specific target'}")
+            logger.debug(f"✅ done SINGLE KEY PRESS: '{key_to_press}' -> {sel_for_press or 'no specific target'}")
             return
 
-        logger.info(f"✅ done {typ} (no specific apply action in this path or already handled)")
+        logger.debug(f"✅ done {typ} (no specific apply action in this path or already handled)")
 
     async def _resolve_click_locator(self, sel: str) -> Optional[Any]:
         if not sel: return None 
