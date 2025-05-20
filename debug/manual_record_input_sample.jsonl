@@ -1,0 +1,50 @@
+{"url": "chrome://new-tab-page/", "x": 364, "y": 287, "button": "left", "selector": "ntp-app", "text": null, "type": "mouse_click", "mods": [], "t": 0}
+{"url": "chrome://new-tab-page/", "key": "x", "code": "KeyX", "selector": "ntp-app", "type": "keyboard_input", "mods": [], "t": 691}
+{"url": "chrome://new-tab-page/", "key": ".", "code": "Period", "selector": "ntp-app", "type": "keyboard_input", "mods": [], "t": 314}
+{"url": "chrome://new-tab-page/", "key": "c", "code": "KeyC", "selector": "ntp-app", "type": "keyboard_input", "mods": [], "t": 236}
+{"url": "chrome://new-tab-page/", "key": "o", "code": "KeyO", "selector": "ntp-app", "type": "keyboard_input", "mods": [], "t": 334}
+{"url": "chrome://new-tab-page/", "key": "m", "code": "KeyM", "selector": "ntp-app", "type": "keyboard_input", "mods": [], "t": 34}
+{"url": "chrome://new-tab-page/", "key": "Enter", "code": "Enter", "selector": "ntp-app", "type": "keyboard_input", "mods": [], "t": 589}
+{"url": "https://x.com/", "type": "navigation", "to": "https://x.com/", "t": 99}
+{"url": "https://x.com/home", "type": "navigation", "to": "https://x.com/home", "t": 491}
+{"url": "https://x.com/home", "x": 385, "y": 103, "button": "left", "selector": "div>div>div>div>div:nth-of-type(2)>div>div>div>div>div", "text": "", "type": "mouse_click", "mods": [], "t": 2475}
+{"url": "https://x.com/home", "key": "t", "code": "KeyT", "selector": "div[data-testid=\"tweetTextarea_0\"]", "type": "keyboard_input", "mods": [], "t": 1184}
+{"url": "https://x.com/home", "key": "e", "code": "KeyE", "selector": "div[data-testid=\"tweetTextarea_0\"]", "type": "keyboard_input", "mods": [], "t": 88}
+{"url": "https://x.com/home", "key": "s", "code": "KeyS", "selector": "div[data-testid=\"tweetTextarea_0\"]", "type": "keyboard_input", "mods": [], "t": 23}
+{"url": "https://x.com/home", "key": "t", "code": "KeyT", "selector": "div[data-testid=\"tweetTextarea_0\"]", "type": "keyboard_input", "mods": [], "t": 85}
+{"url": "https://x.com/home", "key": "i", "code": "KeyI", "selector": "div[data-testid=\"tweetTextarea_0\"]", "type": "keyboard_input", "mods": [], "t": 88}
+{"url": "https://x.com/home", "key": "n", "code": "KeyN", "selector": "div[data-testid=\"tweetTextarea_0\"]", "type": "keyboard_input", "mods": [], "t": 72}
+{"url": "https://x.com/home", "key": "g", "code": "KeyG", "selector": "div[data-testid=\"tweetTextarea_0\"]", "type": "keyboard_input", "mods": [], "t": 187}
+{"url": "https://x.com/home", "key": " ", "code": "Space", "selector": "div[data-testid=\"tweetTextarea_0\"]", "type": "keyboard_input", "mods": [], "t": 69}
+{"url": "https://x.com/home", "key": "t", "code": "KeyT", "selector": "div[data-testid=\"tweetTextarea_0\"]", "type": "keyboard_input", "mods": [], "t": 121}
+{"url": "https://x.com/home", "key": "h", "code": "KeyH", "selector": "div[data-testid=\"tweetTextarea_0\"]", "type": "keyboard_input", "mods": [], "t": 82}
+{"url": "https://x.com/home", "key": "e", "code": "KeyE", "selector": "div[data-testid=\"tweetTextarea_0\"]", "type": "keyboard_input", "mods": [], "t": 44}
+{"url": "https://x.com/home", "key": " ", "code": "Space", "selector": "div[data-testid=\"tweetTextarea_0\"]", "type": "keyboard_input", "mods": [], "t": 115}
+{"url": "https://x.com/home", "key": "p", "code": "KeyP", "selector": "div[data-testid=\"tweetTextarea_0\"]", "type": "keyboard_input", "mods": [], "t": 139}
+{"url": "https://x.com/home", "key": "Backspace", "code": "Backspace", "selector": "div[data-testid=\"tweetTextarea_0\"]", "type": "keyboard_input", "mods": [], "t": 882}
+{"url": "https://x.com/home", "key": "i", "code": "KeyI", "selector": "div[data-testid=\"tweetTextarea_0\"]", "type": "keyboard_input", "mods": [], "t": 176}
+{"url": "https://x.com/home", "key": "n", "code": "KeyN", "selector": "div[data-testid=\"tweetTextarea_0\"]", "type": "keyboard_input", "mods": [], "t": 78}
+{"url": "https://x.com/home", "key": "p", "code": "KeyP", "selector": "div[data-testid=\"tweetTextarea_0\"]", "type": "keyboard_input", "mods": [], "t": 125}
+{"url": "https://x.com/home", "key": "u", "code": "KeyU", "selector": "div[data-testid=\"tweetTextarea_0\"]", "type": "keyboard_input", "mods": [], "t": 74}
+{"url": "https://x.com/home", "key": "t", "code": "KeyT", "selector": "div[data-testid=\"tweetTextarea_0\"]", "type": "keyboard_input", "mods": [], "t": 104}
+{"url": "https://x.com/home", "key": " ", "code": "Space", "selector": "div[data-testid=\"tweetTextarea_0\"]", "type": "keyboard_input", "mods": [], "t": 82}
+{"url": "https://x.com/home", "key": "f", "code": "KeyF", "selector": "div[data-testid=\"tweetTextarea_0\"]", "type": "keyboard_input", "mods": [], "t": 92}
+{"url": "https://x.com/home", "key": "r", "code": "KeyR", "selector": "div[data-testid=\"tweetTextarea_0\"]", "type": "keyboard_input", "mods": [], "t": 55}
+{"url": "https://x.com/home", "key": "o", "code": "KeyO", "selector": "div[data-testid=\"tweetTextarea_0\"]", "type": "keyboard_input", "mods": [], "t": 32}
+{"url": "https://x.com/home", "key": "m", "code": "KeyM", "selector": "div[data-testid=\"tweetTextarea_0\"]", "type": "keyboard_input", "mods": [], "t": 104}
+{"url": "https://x.com/home", "key": " ", "code": "Space", "selector": "div[data-testid=\"tweetTextarea_0\"]", "type": "keyboard_input", "mods": [], "t": 351}
+{"url": "https://x.com/home", "key": "r", "code": "KeyR", "selector": "div[data-testid=\"tweetTextarea_0\"]", "type": "keyboard_input", "mods": [], "t": 178}
+{"url": "https://x.com/home", "key": "e", "code": "KeyE", "selector": "div[data-testid=\"tweetTextarea_0\"]", "type": "keyboard_input", "mods": [], "t": 104}
+{"url": "https://x.com/home", "key": "b", "code": "KeyB", "selector": "div[data-testid=\"tweetTextarea_0\"]", "type": "keyboard_input", "mods": [], "t": 118}
+{"url": "https://x.com/home", "key": "r", "code": "KeyR", "selector": "div[data-testid=\"tweetTextarea_0\"]", "type": "keyboard_input", "mods": [], "t": 142}
+{"url": "https://x.com/home", "key": "o", "code": "KeyO", "selector": "div[data-testid=\"tweetTextarea_0\"]", "type": "keyboard_input", "mods": [], "t": 187}
+{"url": "https://x.com/home", "key": "w", "code": "KeyW", "selector": "div[data-testid=\"tweetTextarea_0\"]", "type": "keyboard_input", "mods": [], "t": 190}
+{"url": "https://x.com/home", "key": "s", "code": "KeyS", "selector": "div[data-testid=\"tweetTextarea_0\"]", "type": "keyboard_input", "mods": [], "t": 213}
+{"url": "https://x.com/home", "key": "e", "code": "KeyE", "selector": "div[data-testid=\"tweetTextarea_0\"]", "type": "keyboard_input", "mods": [], "t": 107}
+{"url": "https://x.com/home", "key": ".", "code": "Period", "selector": "div[data-testid=\"tweetTextarea_0\"]", "type": "keyboard_input", "mods": [], "t": 149}
+{"url": "https://x.com/home", "key": "m", "code": "KeyM", "selector": "div[data-testid=\"tweetTextarea_0\"]", "type": "keyboard_input", "mods": [], "t": 169}
+{"url": "https://x.com/home", "key": "e", "code": "KeyE", "selector": "div[data-testid=\"tweetTextarea_0\"]", "type": "keyboard_input", "mods": [], "t": 109}
+{"url": "https://x.com/home", "x": 681, "y": 215, "button": "left", "selector": "div:nth-of-type(2)>div>div>div>button>div>span>span", "text": "Post", "type": "mouse_click", "mods": [], "t": 13384}
+{"url": "https://x.com/home", "x": 702, "y": 200, "button": "left", "selector": "div>div:nth-of-type(2)>div>div:nth-of-type(2)>div>div>button>div>div>svg", "text": null, "type": "mouse_click", "mods": [], "t": 1479}
+{"url": "https://x.com/home", "x": 667, "y": 210, "button": "left", "selector": "div:nth-of-type(3)>div>div>div>div:nth-of-type(1)>div:nth-of-type(2)>div", "text": "Delete", "type": "mouse_click", "mods": [], "t": 441}
+{"url": "https://x.com/home", "x": 517, "y": 538, "button": "left", "selector": "button[data-testid=\"confirmationSheetConfirm\"]", "text": "Delete", "type": "mouse_click", "mods": [], "t": 685}
