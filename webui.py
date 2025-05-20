@@ -460,7 +460,7 @@ async def run_org_agent(
                 max_input_tokens=max_input_tokens,
                 generate_gif=True
             )
-        history = await _global_agent.run(max_steps=max_steps)
+        history = await _global_agent.run(task_input=task, max_steps=max_steps)
 
         history_file = os.path.join(save_agent_history_path, f"{_global_agent.state.agent_id}.json")
         _global_agent.save_history(history_file)
@@ -1283,6 +1283,14 @@ def create_ui(theme_name="Citrus"):
                 """,
                 elem_classes=["header-text"],
             )
+        
+        # Define trace_file_path here to be in scope for all tabs that might output to it
+        trace_file_path = gr.Textbox( 
+            label="Selected Trace File Path (for Replay)", 
+            value="",
+            interactive=False,
+            visible=False # Set to False to hide it from global rendering
+        )
 
         with gr.Tabs() as tabs:
             with gr.TabItem("⚙️ Settings", id=2):
@@ -1698,172 +1706,158 @@ def create_ui(theme_name="Citrus"):
                         )
                     with gr.Column(scale=1):
                         input_track_start_btn = gr.Button("▶️ Start Recording", variant="primary")
-                        input_track_stop_btn = gr.Button("⏹️ Stop Recording", variant="stop")
-                
-                gr.Markdown("### 📂 Input Trace Files")
-                
-                refresh_traces_btn = gr.Button("🔄 Refresh Trace Files", variant="secondary")
-                
-                trace_file_path = gr.Textbox(
-                    label="Selected Trace File",
-                    value="",
-                    interactive=False,
-                    visible=False
-                )
-                
-                trace_files_list = gr.Dataframe(
-                    headers=["Name", "Created", "Size", "Events"],
-                    label="Available Traces",
-                    interactive=True,
-                    wrap=True
-                )
-                
-                with gr.Row():
-                    trace_info = gr.JSON(
-                        label="Trace File Info",
-                        value={"message": "Select a trace file above to view details"}
-                    )
-                    trace_actions = gr.Column()
-                    with trace_actions:
-                        trace_replay_btn = gr.Button("▶️ Replay Selected Trace", variant="primary")
-                        trace_delete_btn = gr.Button("🗑️ Delete Selected Trace", variant="stop")
-                
-                # Hidden state to store the full list of dicts from list_input_trace_files
-                trace_file_details_state = gr.State([]) 
+                        input_track_stop_btn = gr.Button("⏹️ Stop Recording", variant="stop", interactive=False) # Stop initially not interactive
 
-                # Connect event handlers
+                gr.Markdown("### 📜 Last Recorded Trace Info") # New section for Record tab
+                recorded_trace_info_display = gr.JSON(
+                    label="Last Recorded Trace Details",
+                    value={"message": "No trace recorded in this session yet."}
+                )
+                
+                # Event handlers for Start/Stop recording buttons (remain in Record Tab)
+                # Modified outputs for stop_input_tracking_with_context to include recorded_trace_info_display
                 input_track_start_btn.click(
                     fn=start_input_tracking_with_context,
                     inputs=[],
-                    outputs=[input_track_status, input_track_start_btn, input_track_stop_btn, trace_file_path]
+                    # Outputs for start_input_tracking_with_context:
+                    # 1. input_track_status Textbox
+                    # 2. input_track_start_btn Button update
+                    # 3. input_track_stop_btn Button update
+                    # 4. trace_file_path Textbox (this will now be in Replay tab, but function still provides it)
+                    outputs=[input_track_status, input_track_start_btn, input_track_stop_btn, trace_file_path] 
                 )
                 
                 input_track_stop_btn.click(
                     fn=stop_input_tracking_with_context,
                     inputs=[],
-                    outputs=[input_track_status, input_track_start_btn, input_track_stop_btn, trace_file_path]
+                    # Outputs for stop_input_tracking_with_context:
+                    # 1. input_track_status Textbox
+                    # 2. input_track_start_btn Button update
+                    # 3. input_track_stop_btn Button update
+                    # 4. trace_file_path Textbox (this will now be in Replay tab, but function still provides it)
+                    # 5. NEW: recorded_trace_info_display JSON
+                    outputs=[input_track_status, input_track_start_btn, input_track_stop_btn, trace_file_path, recorded_trace_info_display]
+                )
+
+
+            # New: Replay Tab
+            with gr.TabItem("🔁 Replay", id=10): # New Tab
+                gr.Markdown("### 📂 Input Trace Files")
+                
+                refresh_traces_btn = gr.Button("🔄 Refresh Trace Files", variant="secondary")
+                
+                # The globally defined trace_file_path (now invisible) is used by handlers.
+                # The display-only Textbox for the path that was here is now removed.
+
+                trace_files_list = gr.Dataframe(
+                    headers=["Name", "Created", "Size", "Events"],
+                    label="Available Traces for Replay", # Clarified label
+                    interactive=True,
+                    wrap=True
                 )
                 
-                # Restored functions and handlers that were accidentally deleted
+                with gr.Row():
+                    trace_info_display_replay = gr.JSON( # Renamed to avoid conflict if original trace_info was different
+                        label="Selected Trace File Info",
+                        value={"message": "Select a trace file above to view details"}
+                    )
+                    trace_actions = gr.Column()
+                    with trace_actions:
+                        trace_replay_btn = gr.Button("▶️ Replay Selected Trace", variant="primary")
+                        replay_speed_input = gr.Number(label="Replay Speed", value=2.0, minimum=0.1, interactive=True, scale=1)
+                
+                    # replay_status_output is now wrapped in its own Row
+                with gr.Row(): 
+                    replay_status_output = gr.Textbox(label="Replay Status", interactive=False)
+
+                # Hidden state to store the full list of dicts from list_input_trace_files
+                # This state is specific to the replay tab's list.
+                trace_file_details_state_replay = gr.State([]) 
+
+                # Event Handlers for Replay Tab
+                # get_trace_file_path function definition (copied from original location)
                 def get_trace_file_path(details_list: Optional[List[Dict[str, Any]]], evt: gr.SelectData) -> str:
-                    logger.debug(f"--- DEBUG get_trace_file_path: Event received: evt.index={evt.index}, evt.value='{evt.value}', evt.selected={evt.selected} ---")
+                    logger.debug(f"--- DEBUG get_trace_file_path (Replay Tab): Event received: evt.index={evt.index}, evt.value='{evt.value}', evt.selected={evt.selected} ---")
                     if details_list is None:
-                        logger.warning("--- DEBUG get_trace_file_path: details_list is None. Returning empty. ---")
+                        logger.warning("--- DEBUG get_trace_file_path (Replay Tab): details_list is None. Returning empty. ---")
                         return ""
                     if not evt.index or not isinstance(evt.index, (list, tuple)) or len(evt.index) == 0:
-                        logger.error(f"--- DEBUG get_trace_file_path: evt.index is invalid: {evt.index}. Returning empty. ---")
+                        logger.error(f"--- DEBUG get_trace_file_path (Replay Tab): evt.index is invalid: {evt.index}. Returning empty. ---")
                         return ""
                     potential_row_index = evt.index[0]
                     if not isinstance(potential_row_index, int):
-                        logger.error(f"--- DEBUG get_trace_file_path: Extracted potential_row_index '{potential_row_index}' is not an int. evt.index was: {evt.index}. Returning empty. ---")
+                        logger.error(f"--- DEBUG get_trace_file_path (Replay Tab): Extracted potential_row_index '{potential_row_index}' is not an int. evt.index was: {evt.index}. Returning empty. ---")
                         return ""
                     row_index = potential_row_index
                     if 0 <= row_index < len(details_list):
                         selected_item_dict = details_list[row_index]
                         if isinstance(selected_item_dict, dict):
                             path_val = selected_item_dict.get("path")
-                            logger.info(f"--- DEBUG get_trace_file_path: Selected row index {row_index}, from details_list: {selected_item_dict}, extracted path: {path_val} ---")
+                            logger.info(f"--- DEBUG get_trace_file_path (Replay Tab): Selected row index {row_index}, from details_list: {selected_item_dict}, extracted path: {path_val} ---")
                             return str(path_val) if path_val is not None else ""
                         else:
-                            logger.warning(f"--- DEBUG get_trace_file_path: Item at index {row_index} in details_list is not a dict: {selected_item_dict} (type: {type(selected_item_dict)}) ---")
+                            logger.warning(f"--- DEBUG get_trace_file_path (Replay Tab): Item at index {row_index} in details_list is not a dict: {selected_item_dict} (type: {type(selected_item_dict)}) ---")
                     else:
-                        logger.warning(f"--- DEBUG get_trace_file_path: Row index {row_index} out of bounds for details_list (0 to {len(details_list) -1}). ---")
+                        logger.warning(f"--- DEBUG get_trace_file_path (Replay Tab): Row index {row_index} out of bounds for details_list (0 to {len(details_list) -1}). ---")
                     return ""
-                
+
                 trace_files_list.select(
                     fn=get_trace_file_path,
-                    inputs=[trace_file_details_state],
-                    outputs=[trace_file_path]
+                    inputs=[trace_file_details_state_replay], # Use the replay-specific state
+                    outputs=[trace_file_path] # This updates the (now primarily) Replay tab's path display
                 )
                 
-                def update_trace_info(trace_path):
-                    if not trace_path:
-                        return {"message": "No trace file selected"}
-                    info = user_input_functions.get_file_info(trace_path)
+                # update_trace_info function definition (copied from original location)
+                def update_trace_info_for_replay(local_trace_file_path: str): # Renamed parameter to avoid confusion
+                    if not local_trace_file_path:
+                        return {"message": "No trace file selected for replay"}
+                    info = user_input_functions.get_file_info(local_trace_file_path)
                     return info
                 
-                trace_file_path.change(
-                    fn=update_trace_info,
+                trace_file_path.change( # This Textbox is now in the Replay tab
+                    fn=update_trace_info_for_replay,
                     inputs=[trace_file_path],
-                    outputs=[trace_info]
+                    outputs=[trace_info_display_replay] # Update the replay-specific JSON display
                 )
                 
-                def refresh_traces():
+                # refresh_traces function definition (copied from original location)
+                def refresh_traces_for_replay(): # Renamed to be specific
                     try:
-                        # Ensure save_input_tracking_path.value is correctly accessed if it's a Gradio component.
-                        # If refresh_traces is a top-level function, it might not have direct access to component.value.
-                        # Assuming save_input_tracking_path is accessible and its .value gives the current path string.
-                        # If save_input_tracking_path is a global string variable, then just use its name.
-                        # For this edit, I'm assuming 'save_input_tracking_path' is a Gradio component instance
-                        # available in the scope where 'refresh_traces' can access its '.value' attribute.
-                        # If 'save_input_tracking_path' is the global variable MANUAL_TRACES_DIR, use that.
-                        # Based on the UI code, save_input_tracking_path is a gr.Textbox.
-                        # This function is defined inside create_ui, so it should have access to UI elements.
-                        
-                        # Attempting to get the value. This might need adjustment based on actual scope.
-                        # Let's assume save_input_tracking_path is the Gradio component.
-                        # This function, when triggered by a button, might not have direct access to other components' live values
-                        # unless they are passed as inputs to the gr.Button().click() call.
-                        # The refresh_traces_btn.click is defined as:
-                        # fn=refresh_traces, inputs=[], outputs=[trace_files_list, trace_file_details_state]
-                        # So, it does NOT get save_input_tracking_path as an input.
-                        # This means it likely relies on the global MANUAL_TRACES_DIR or needs save_input_tracking_path as an input.
-                        # Let's use MANUAL_TRACES_DIR for now, as that's the default and less prone to scope issues here.
                         current_tracking_path = MANUAL_TRACES_DIR 
-                        
-                        logger.debug(f"--- DEBUG webui.refresh_traces: Path being used: '{current_tracking_path}' ---")
-
+                        logger.debug(f"--- DEBUG webui.refresh_traces_for_replay: Path being used: '{current_tracking_path}' ---")
                         files = user_input_functions.list_input_trace_files(current_tracking_path)
-                        logger.debug(f"--- DEBUG webui.refresh_traces: Received files list (count: {len(files)}): {files if len(files) < 5 else str(files)[:200] + '...'} ---")
                         rows = []
                         for i, file_dict_item in enumerate(files):
-                            logger.debug(f"--- DEBUG webui.refresh_traces: Processing item {i} from files: {file_dict_item} (type: {type(file_dict_item)}) ---")
                             if not isinstance(file_dict_item, dict):
-                                logger.warning(f"--- DEBUG webui.refresh_traces: Item {i} is not a dict, skipping. ---")
+                                logger.warning(f"--- DEBUG webui.refresh_traces_for_replay: Item {i} is not a dict, skipping. ---")
                                 continue
-                            # Use lowercase keys to match the data from list_input_trace_files
                             name_val = file_dict_item.get("name", "N/A") 
                             created_val = file_dict_item.get("created", "N/A")
                             size_val = file_dict_item.get("size", "N/A")
                             events_val = file_dict_item.get("events", "N/A")
-                            
-                            if not isinstance(name_val, str): # Corrected indentation for this block
-                                logger.warning(f"--- DEBUG webui.refresh_traces: 'name' field is not a string for item {i}: {name_val} (type: {type(name_val)}). Using 'Invalid Name'. ---")
+                            if not isinstance(name_val, str):
+                                logger.warning(f"--- DEBUG webui.refresh_traces_for_replay: 'name' field is not a string for item {i}: {name_val} (type: {type(name_val)}). Using 'Invalid Name'. ---")
                                 name_val = "Invalid Name"
                             rows.append([name_val, created_val, size_val, events_val])
-                        logger.debug(f"--- DEBUG webui.refresh_traces: Processed rows for Dataframe (count: {len(rows)}): {rows if len(rows) < 5 else str(rows)[:200] + '...'} ---")
-                        return rows, files
+                        return rows, files # Returns for Dataframe and State
                     except Exception as e:
                         import traceback
-                        logger.error(f"Fatal error in refresh_traces: {str(e)}\\\\n{traceback.format_exc()}")
+                        logger.error(f"Fatal error in refresh_traces_for_replay: {str(e)}\\\\n{traceback.format_exc()}")
                         return ([["Error: " + str(e), "", "", ""]], [])
                         
-                def delete_trace_file(trace_path):
-                    if not trace_path:
-                        return "No file selected", gr.update(), gr.update()
-                    try:
-                        if os.path.exists(trace_path):
-                            os.remove(trace_path)
-                            refreshed_rows, refreshed_details = refresh_traces()
-                            return f"Deleted: {os.path.basename(trace_path)}", refreshed_rows, refreshed_details
-                        else:
-                            return "File not found", gr.update(), gr.update()
-                    except Exception as e:
-                        logger.error(f"Error deleting trace file: {str(e)}")
-                        return f"Error: {str(e)}", gr.update(), gr.update()
-                
-                refresh_traces_btn.click(
-                    fn=refresh_traces,
+                refresh_traces_btn.click( # This button is now in the Replay tab
+                    fn=refresh_traces_for_replay,
                     inputs=[],
-                    outputs=[trace_files_list, trace_file_details_state]
+                    outputs=[trace_files_list, trace_file_details_state_replay] # Update replay-specific components
                 )
 
-                # Wrapper function for replaying traces to ensure context is set.
-                async def replay_trace_wrapper(trace_path_from_ui: str) -> str:
-                    """Wraps the call to user_input_functions.replay_input_trace, ensuring context is set and valid."""
-                    logger.info(f"--- DEBUG replay_trace_wrapper: Called with path: {trace_path_from_ui} ---")
-                    global _global_browser, _global_browser_context
-
+                # replay_trace_wrapper function definition (copied from original location)
+                # This function uses _global_browser_context which is managed by start/stop recording
+                async def replay_trace_wrapper(local_trace_path_from_ui: str, local_replay_speed: float) -> str:
+                    logger.info(f"--- DEBUG replay_trace_wrapper (Replay Tab): Called with path: {local_trace_path_from_ui}, Speed: {local_replay_speed} ---")
+                    global _global_browser, _global_browser_context, _last_manual_trace_path 
+                    # Context init logic (copied and adapted)
+                    # ... (Assume context init logic from original replay_trace_wrapper is here)
                     # --- Start: Context Initialization Logic (adapted from start_input_tracking_with_context) ---
                     if _global_browser is None:
                         logger.info("--- DEBUG replay_trace_wrapper: Global browser not found, initializing for replay... ---")
@@ -1871,7 +1865,7 @@ def create_ui(theme_name="Citrus"):
                             config=BrowserConfig(
                                 headless=False, 
                                 disable_security=True, 
-                                cdp_url=os.getenv("CHROME_CDP", "http://localhost:9222"), 
+                                cdp_url=os.getenv("CHROME_CDP_URL", os.getenv("CHROME_CDP", "http://localhost:9222")), # Prioritize CHROME_CDP_URL
                                 chrome_instance_path=os.getenv("CHROME_PATH", None),
                                 extra_chromium_args=[]
                             )
@@ -1884,13 +1878,16 @@ def create_ui(theme_name="Citrus"):
                     should_create_new_context = False
                     if _global_browser_context is None:
                         should_create_new_context = True
-                    elif not _global_browser_context.playwright_context or not _global_browser_context.playwright_context.pages:
-                        logger.info("--- DEBUG replay_trace_wrapper: Existing context has no pages or invalid. Will create new one. ---")
+                    elif not _global_browser_context.playwright_context or not _global_browser_context.playwright_context.pages: # Check pages here
+                        logger.info("--- DEBUG replay_trace_wrapper: Existing context has no pages or invalid Playwright link. Will create new one. ---")
+                        await _global_browser_context.close() # Close unusable context
+                        _global_browser_context = None
                         should_create_new_context = True
                     elif _global_browser_context.playwright_context and context_is_closed(_global_browser_context.playwright_context):
                         logger.info("--- DEBUG replay_trace_wrapper: Existing context connection closed. Will create new one. ---")
+                        _global_browser_context = None # No need to explicitly close if already closed by Playwright
                         should_create_new_context = True
-
+                    
                     if should_create_new_context:
                         logger.info(f"--- DEBUG replay_trace_wrapper: Attempting to initialize global browser context for replay. Current _global_browser.config.cdp_url: {_global_browser.config.cdp_url if _global_browser and _global_browser.config else 'N/A'} ---")
                         if _global_browser and _global_browser.config and _global_browser.config.cdp_url:
@@ -1905,20 +1902,19 @@ def create_ui(theme_name="Citrus"):
                                     await page.bring_to_front()
                             except Exception as e:
                                 logger.error(f"--- DEBUG replay_trace_wrapper: Failed to reuse existing browser context: {e}. Falling back to new context strategy. ---")
-                                _global_browser_context = None # Ensure fallback occurs
+                                _global_browser_context = None 
                         
-                        if _global_browser_context is None: # If not using CDP or reuse failed
+                        if _global_browser_context is None: 
                             logger.info("--- DEBUG replay_trace_wrapper: Initializing new browser context for replay (not using CDP or reuse failed). ---")
-                            # Ensure _global_browser is valid before calling new_context
                             if not (_global_browser and _global_browser.playwright):
                                 logger.error("--- DEBUG replay_trace_wrapper: Global browser not available for creating new context. Cannot proceed with replay setup. ---")
                                 return "Error: Browser not available for replay context."
                             
                             _global_browser_context = await _global_browser.new_context(
                                 config=AppCustomBrowserContextConfig(
-                                    enable_input_tracking=False, # No tracking during replay by default
-                                    save_input_tracking_path="",   # No save path needed for replay context
-                                    browser_window_size=BrowserContextWindowSize(width=1280, height=1100) # Consistent window size
+                                    enable_input_tracking=False, # Input tracking not needed for replay itself
+                                    save_input_tracking_path="",   # Not saving new tracks during replay
+                                    browser_window_size=BrowserContextWindowSize(width=1280, height=1100) 
                                 )
                             )
                             if _global_browser_context and _global_browser_context.playwright_context:
@@ -1926,7 +1922,7 @@ def create_ui(theme_name="Citrus"):
                                     page = await _global_browser_context.playwright_context.new_page()
                                     await page.bring_to_front()
                                     await page.goto("about:blank") 
-                                    logger.info(f"--- DEBUG replay_trace_wrapper: New context and page ('{page.url}') created for replay.")
+                                    logger.info(f"--- DEBUG replay_trace_wrapper: New context and page ('{page.url if page else 'N/A'}') created for replay.")
                                 except Exception as e:
                                     logger.error(f"--- DEBUG replay_trace_wrapper: Error opening new page for new replay context: {e}")
                                     return "Error: Could not prepare browser page for replay."
@@ -1935,93 +1931,57 @@ def create_ui(theme_name="Citrus"):
                                 return "Error: Could not create browser context for replay."
                     # --- End: Context Initialization Logic ---
 
-                    # At this point, _global_browser_context should be valid and have a page.
                     if not isinstance(_global_browser_context, CustomBrowserContext) or not _global_browser_context.pages:
-                         logger.error(f"--- DEBUG replay_trace_wrapper: Context is not valid CustomBrowserContext or has no pages after init attempt. Type: {type(_global_browser_context)}")
+                         logger.error(f"--- DEBUG replay_trace_wrapper: Context is not valid CustomBrowserContext or has no pages after init. Type: {type(_global_browser_context)}")
                          return "Error: Browser context is not ready for replay after setup."
 
                     logger.info(f"--- DEBUG replay_trace_wrapper: Setting browser context in user_input_functions. Context type: {type(_global_browser_context)} ---")
-                    user_input_functions.set_browser_context(_global_browser_context) # Call set_browser_context
+                    user_input_functions.set_browser_context(_global_browser_context)
                     
                     try:
-                        # Call replay_input_trace and handle boolean result
-                        success = await user_input_functions.replay_input_trace(trace_path_from_ui, speed=1.0) 
+                        success = await user_input_functions.replay_input_trace(local_trace_path_from_ui, speed=local_replay_speed)
                         if success:
                             status_message = "Input trace replay completed successfully."
+                            _last_manual_trace_path = local_trace_path_from_ui 
                         else:
                             status_message = "Failed to replay input trace. See logs for details."
                         logger.info(f"--- DEBUG replay_trace_wrapper: Replay status: {status_message} ---")
                         return status_message
                     finally:
-                        # Only close the browser if keep_browser_open is False
-                        # This logic depends on the keep_browser_open Gradio component's value
-                        # We need to access it correctly, assuming `keep_browser_open` is a Gradio component instance available in this scope
-                        # If `keep_browser_open` is the component itself, its value is `keep_browser_open.value` (if it's a global or passed param)
-                        # For now, I'm assuming `keep_browser_open_value` is a boolean passed or retrieved correctly.
-                        # This part of the logic was from a previous step, ensuring it remains consistent.
-                        # The user's latest request doesn't modify this finally block's condition directly,
-                        # but implies the browser closing is handled by `keep_open=True` passed to `replay_input_events`.
-                        # The `finally` block in `replay_trace_wrapper` in `webui.py` handles UI/global state browser closing.
-                        # The `keep_open` in `replay_input_events` in `custom_context.py` handles Playwright-level browser closing.
-                        pass # Ensure the finally block has a statement
+                        pass # Keep context open as per original logic in replay_input_trace
 
-                trace_replay_btn.click(
-                    fn=replay_trace_wrapper, # Changed to the wrapper function
-                    inputs=[trace_file_path],
-                    outputs=[input_track_status]
+                trace_replay_btn.click( # This button is now in the Replay tab
+                    fn=replay_trace_wrapper, 
+                    inputs=[trace_file_path, replay_speed_input], 
+                    outputs=[replay_status_output] # Output to the replay-specific status
                 )
-                
-                trace_delete_btn.click(
-                    fn=delete_trace_file,
-                    inputs=[trace_file_path],
-                    outputs=[input_track_status, trace_files_list, trace_file_details_state]
-                )
-                
-                # Automatically refresh the trace files list - simpler approach without _js
-                tabs.select(
-                    fn=lambda: None,
-                    inputs=[],
-                    outputs=[]
-                )
-                
-                # Add a function to auto-refresh when the tab loads
-                def on_tab_select(tab_id):
-                    if tab_id == "🛑 Record":
-                        return refresh_traces()
-                    return []
-                    
-                tabs.select(
-                    fn=on_tab_select,
-                    inputs=[],
-                    outputs=[trace_files_list]
-                )
+        
+            # Attach the callback to the LLM provider dropdown
+            llm_provider.change(
+                lambda provider, api_key, base_url: update_model_dropdown(provider, api_key, base_url),
+                inputs=[llm_provider, llm_api_key, llm_base_url],
+                outputs=llm_model_name
+            )
 
-        # Attach the callback to the LLM provider dropdown
-        llm_provider.change(
-            lambda provider, api_key, base_url: update_model_dropdown(provider, api_key, base_url),
-            inputs=[llm_provider, llm_api_key, llm_base_url],
-            outputs=llm_model_name
-        )
+            # Add this after defining the components
+            enable_recording.change(
+                lambda enabled: gr.update(interactive=enabled),
+                inputs=enable_recording,
+                outputs=save_recording_path
+            )
 
-        # Add this after defining the components
-        enable_recording.change(
-            lambda enabled: gr.update(interactive=enabled),
-            inputs=enable_recording,
-            outputs=save_recording_path
-        )
+            use_own_browser.change(fn=close_global_browser)
+            keep_browser_open.change(fn=close_global_browser)
 
-        use_own_browser.change(fn=close_global_browser)
-        keep_browser_open.change(fn=close_global_browser)
+            scan_and_register_components(demo)
+            global webui_config_manager
+            all_components = webui_config_manager.get_all_components()
 
-        scan_and_register_components(demo)
-        global webui_config_manager
-        all_components = webui_config_manager.get_all_components()
-
-        load_config_button.click(
-            fn=update_ui_from_config,
-            inputs=[config_file_input],
-            outputs=all_components + [config_status]
-        )
+            load_config_button.click(
+                fn=update_ui_from_config,
+                inputs=[config_file_input],
+                outputs=all_components + [config_status]
+            )
     return demo
 
 # Build once; let the `gradio` CLI launch & reload
@@ -2030,4 +1990,6 @@ app  = demo                            # optional alias, harmless
 
 # --- allow plain `python webui.py` ----------------------------------
 if __name__ == "__main__":              # executed only when you run: python webui.py
-    demo.launch(server_name="127.0.0.1", server_port=7860, debug=True, allowed_paths=["./tmp/input_tracking"])
+    # Ensure MANUAL_TRACES_DIR exists at startup
+    Path(MANUAL_TRACES_DIR).mkdir(parents=True, exist_ok=True)
+    demo.launch(server_name="127.0.0.1", server_port=7860, debug=True, allowed_paths=[MANUAL_TRACES_DIR])
