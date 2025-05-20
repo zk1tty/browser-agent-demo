@@ -18,7 +18,7 @@ from playwright.async_api import BrowserContext as PlaywrightBrowserContext
 import logging
 
 from src.browser.custom_context import CustomBrowserContext
-from src.browser.custom_context_config import CustomBrowserContextConfig as AppBrowserContextConfig
+from src.browser.custom_context_config import CustomBrowserContextConfig as AppCustomBrowserContextConfig
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +66,7 @@ class CustomBrowser(Browser):
                     args=launch_args,
                     channel="chrome"
                 )
-                self._playwright_browser = await self._playwright_browser_context_manager
+                self._playwright_browser = self._playwright_browser_context_manager
 
             else:
                 logger.info(f"Launching new Chrome browser instance with args: {self.config.extra_chromium_args}")
@@ -120,11 +120,17 @@ class CustomBrowser(Browser):
         else:
             raise TypeError(f"_playwright_browser is of unexpected type: {type(self._playwright_browser)}")
 
-        return CustomBrowserContext.from_existing(pw_context=base_ctx_to_wrap, browser_instance=self)
+        # Need to import AppCustomBrowserContextConfig if not already available in this scope
+        # from src.browser.custom_context_config import CustomBrowserContextConfig as AppCustomBrowserContextConfig (should be at top)
+        return CustomBrowserContext.from_existing(
+            pw_context=base_ctx_to_wrap,
+            browser=self, 
+            config=AppCustomBrowserContextConfig() # Pass a default config
+        )
 
     async def new_context(
             self,
-            config: AppBrowserContextConfig = AppBrowserContextConfig()
+            config: AppCustomBrowserContextConfig = AppCustomBrowserContextConfig()
     ) -> "CustomBrowserContext":
         
         if not hasattr(self, '_playwright_browser') or not self._playwright_browser:
@@ -164,9 +170,9 @@ class CustomBrowser(Browser):
 
         # Create and return our CustomBrowserContext wrapper
         custom_context = CBC_in_CustomBrowser( # Use aliased import for instantiation
-            config=config, # Pass the AppBrowserContextConfig instance
+            pw_context=playwright_context_to_wrap,
             browser=self,
-            playwright_context=playwright_context_to_wrap
+            config=config # Pass the config received by new_context
         )
         print(f"DEBUG_INIT: Type of CREATED context in custom_browser.py: {type(custom_context)}, ID of its type: {id(type(custom_context))}")
         
