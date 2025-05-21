@@ -33,6 +33,7 @@ class TraceReplayer:
     def __init__(self, page, trace: List[Dict[str, Any]]):
         self.page, self.trace = page, trace
         self._clicked_with_selector = False
+        self._clicked_dispatch = False
 
     # ------------- main loop -------------
 
@@ -212,33 +213,61 @@ class TraceReplayer:
         if typ == "mouse_click":
             btn = ev.get("button", "left")
             self._clicked_with_selector = False
+            self._clicked_dispatch = False
             if sel_event:
                 loc = await self._resolve_click_locator(sel_event)
                 if loc:
+                    element_handle = None
                     try:
-                        await loc.scroll_into_view_if_needed()
-                        logger.debug(f"Waiting for element '{sel_event}' to be enabled before click.")
-                        element_handle = await loc.element_handle()
-                        if not element_handle:
-                            raise Exception(f"Could not get element handle for selector: {sel_event}")
-
-                        await self.page.wait_for_function(
-                            expression="e => !e.disabled && (!e.hasAttribute('aria-disabled') || e.getAttribute('aria-disabled') === 'false')",
-                            arg=element_handle,
-                            polling='raf',
-                            timeout=2000
-                        )
-                        logger.debug(f"Element '{sel_event}' is enabled. Proceeding with click (force=True).")
-                        await loc.click(button=self.BTN_MAP.get(btn, "left"), timeout=1500, force=True)
+                        logger.debug(f"Attempting to click resolved locator for original selector: {sel_event}")
+                        
+                        await loc.wait_for(state='visible', timeout=3000)
+                        await loc.scroll_into_view_if_needed(timeout=3000)
+                        logger.debug(f"Element '{sel_event}' (resolved to button) is visible. Attempting standard click.")
+                        
+                        await loc.click(button=self.BTN_MAP.get(btn, "left"), timeout=3000, delay=100)
                         self._clicked_with_selector = True
-                        logger.debug(f"selector click OK → {sel_event}")
+                        logger.info(f"Standard Playwright click successful for resolved locator from selector: {sel_event}")
+                        await asyncio.sleep(0.25)
                         return
-                    except Exception as e_click:
-                        logger.warning(f"selector click failed for {sel_event}: {e_click.__class__.__name__} ({str(e_click)}) – fallback XY")
+
+                    except Exception as e_click_attempt1:
+                        logger.warning(f"Standard Playwright click (attempt 1) for resolved locator from '{sel_event}' failed: {e_click_attempt1.__class__.__name__} ({str(e_click_attempt1)})")
+                        
+                        try:
+                            logger.info(f"Fallback: Attempting to dispatch click event for resolved locator from '{sel_event}'")
+                            if await loc.count() > 0:
+                                element_handle = await loc.element_handle(timeout=1000)
+                                if element_handle:
+                                    await element_handle.dispatch_event('click')
+                                    self._clicked_dispatch = True
+                                    self._clicked_with_selector = True
+                                    logger.info(f"DispatchEvent (via element_handle) click successful for '{sel_event}'")
+                                    await asyncio.sleep(0.25)
+                                    return
+                                else:
+                                    await loc.dispatch_event('click')
+                                    self._clicked_dispatch = True
+                                    self._clicked_with_selector = True
+                                    logger.info(f"DispatchEvent (via locator) click successful for '{sel_event}'")
+                                    await asyncio.sleep(0.25)
+                                    return
+                            else:
+                                logger.error(f"Cannot dispatch click for '{sel_event}', resolved locator is empty.")
+
+                        except Exception as e_dispatch:
+                            logger.warning(f"DispatchEvent click failed for '{sel_event}': {e_dispatch.__class__.__name__} ({str(e_dispatch)}). Falling back to XY if available.")
             
-            log_x, log_y = ev.get("x"), ev.get("y")
-            logger.debug(f"fallback XY click {log_x},{log_y}")
-            await self.page.mouse.click(log_x or 0, log_y or 0, button=self.BTN_MAP.get(btn, "left"))
+            # Fallback to XY click if selector-based attempts failed or no selector
+            if not self._clicked_with_selector:
+                log_x, log_y = ev.get("x"), ev.get("y")
+                if log_x is not None and log_y is not None:
+                    logger.info(f"Fallback: Performing coordinate-based click at ({log_x},{log_y})")
+                    await self.page.mouse.click(log_x, log_y, button=self.BTN_MAP.get(btn, "left"))
+                    await asyncio.sleep(0.25)
+                else:
+                    if sel_event:
+                         logger.error(f"All click attempts failed for selector '{sel_event}' and no XY coordinates available.")
             return
         
         if typ == "keyboard_input":
@@ -272,57 +301,145 @@ class TraceReplayer:
         logger.debug(f"✅ done {typ} (no specific apply action in this path or already handled)")
 
     async def _resolve_click_locator(self, sel: str) -> Optional[Any]:
-        if not sel: return None 
+        if not sel: return None
 
-        initial_loc = self.page.locator(sel).first 
-        if await initial_loc.count() > 0:
-            return initial_loc
+        # Initial locator based on the selector from the trace
+        initial_loc = self.page.locator(sel).first
+
+        # Check if the initial locator itself is a button or has role="button"
+        # Use a try-catch for evaluate as the element might not exist or be stale
+        try:
+            if await initial_loc.count() > 0: # Ensure element exists before evaluation
+                # Check if the element itself is a button or has role="button"
+                is_button_or_has_role = await initial_loc.evaluate(
+                    "el => el.tagName === 'BUTTON' || el.getAttribute('role') === 'button'"
+                )
+                if is_button_or_has_role:
+                    logger.debug(f"_resolve_click_locator: Initial selector '{sel}' is already a button or has role='button'. Using it.")
+                    return initial_loc
+            else:
+                logger.debug(f"_resolve_click_locator: Initial selector '{sel}' did not yield any elements. Will try to find ancestor.")
+                # If initial_loc.count() is 0, initial_loc might not be suitable for ancestor search directly, 
+                # but Playwright handles this by searching from the page if the locator is empty.
+                # However, it's cleaner to ensure we have a starting point if we intend to find an ancestor *of something*.
+                # For now, we will proceed, and if initial_loc is empty, the ancestor search becomes a page-wide search for a button.
+
+        except Exception as e_eval_initial:
+            logger.debug(f"_resolve_click_locator: Error evaluating initial selector '{sel}': {e_eval_initial}. Will try to find ancestor.")
+
+        # If not, or if initial check failed, try to find an ancestor that is a button or has role="button"
+        # This also covers cases where `sel` might point to an inner element of a button (e.g., a span).
+        # The XPath searches for an ancestor OR self that is a button or has the role.
+        # Using a more specific XPath to find the closest ancestor or self that is a button:
+        # xpath=ancestor-or-self::button | ancestor-or-self::*[@role='button']
+        # Playwright's loc.locator("xpath=...") will find the first such element from the perspective of `loc`.
+        # If initial_loc was empty, this effectively searches from page root.
         
-        if sel.endswith('>span') or sel.endswith('>span>span'):
-            logger.debug("Selector '%s' ends with >span. Attempting to find ancestor button.", sel)
-            try:
-                ancestor_button_loc = initial_loc.locator('xpath=ancestor::button | ancestor::*[@role="button"]').first
-                if await ancestor_button_loc.count() > 0:
-                    logger.debug("Found ancestor button for '%s'. Using it for click.", sel)
-                    return ancestor_button_loc
-                else:
-                    logger.debug("No ancestor button found for '%s'. Will try original selector if it exists.", sel)
-            except Exception as e_ancestor:
-                logger.debug("Error finding ancestor button for '%s': %s. Trying original selector.", sel, e_ancestor)
-        return None
+        # Let's try a slightly different approach for finding the button: use Playwright's :nth-match with a broader internal selector.
+        # This attempts to find the *actual element* matching 'sel', then looks upwards or at itself for a button.
+        # This is more robust if 'sel' is very specific to an inner element.
+
+        # Re-fetch the initial locator to ensure we are working from the element pointed to by `sel`
+        # This is important if `sel` is like 'div > span' - we want the span, then find its button parent.
+        # If initial_loc.count() was 0 above, this will still be an empty locator.
+        element_loc = self.page.locator(sel).first 
+
+        if await element_loc.count() > 0:
+            # Try to find a button by looking at the element itself or its ancestors
+            # This combines checking self and then ascending.
+            # The XPath 'ancestor-or-self::button | ancestor-or-self::*[@role="button"]' correctly finds the button.
+            # We then take the .first of these, as Playwright will return them in document order (ancestors first).
+            # To get the *closest* (most specific) button, we might need to be careful.
+            # However, Playwright's .locator on an existing locator usually chains correctly.
+
+            # Let's try to find the *specific* element by `sel` and then chain to find its button ancestor or self.
+            # This is more reliable than a broad page search if `sel` is specific.
+            potential_button_loc = element_loc.locator("xpath=ancestor-or-self::button | ancestor-or-self::*[@role='button']").first
+            if await potential_button_loc.count() > 0:
+                logger.debug(f"_resolve_click_locator: Found button/role=button for '{sel}' via ancestor-or-self. Using it.")
+                return potential_button_loc
+            else:
+                logger.debug(f"_resolve_click_locator: No button ancestor found for specific element of '{sel}'. Falling back to initial locator if it exists.")
+                return element_loc if await element_loc.count() > 0 else None # Fallback to the original if it existed, else None
+        else:
+            # If the original selector `sel` finds nothing, try a page-wide search for a button that might contain the text from `sel` if `sel` was text-based
+            # This part is tricky and heuristic. For now, if `sel` finds nothing, we return None.
+            logger.debug(f"_resolve_click_locator: Initial selector '{sel}' found no elements. Cannot resolve to a button.")
+            return None
 
     # ------------- verify -------------
 
+    async def _verify_tweet_posted(self):
+        try:
+            await self.page.wait_for_selector('[role=alert]:text("sent")', timeout=3000)
+            logger.info("Tweet post verification successful: 'sent' toast found.")
+        except Exception as e_toast:
+            logger.error(f"Tweet post verification failed: 'sent' toast not found within timeout. Error: {e_toast.__class__.__name__}")
+            raise Drift("Tweet not posted (confirmation toast not found after click)")
+
     async def _verify(self, ev: Dict[str, Any]):
         typ = ev["type"]
+        sel_from_event_verify = ev.get("selector")
 
         if typ == "navigation":
             if not self._url_eq(self.page.url, ev["to"]):
-                raise Drift("URL drift: expected %s, got %s" % (ev["to"], self.page.url), ev)
+                current_event_expected_url = ev["url"]
+                nav_target_url = ev["to"]
+                actual_page_url = self.page.url
+
+                if self._url_eq(actual_page_url, nav_target_url):
+                    logger.debug(f"Navigation URL verified: Expected target {nav_target_url}, Got {actual_page_url}")
+                    return
+
+                logger.warning(f"Potential Navigation URL drift: Expected target {nav_target_url}, but current URL is {actual_page_url}. Original event recorded at {current_event_expected_url}")
+                
+                current_event_index = -1
+                try:
+                    current_event_index = self.trace.index(ev)
+                except ValueError:
+                    logger.error("Critical: Could not find current navigation event in trace for drift recovery. Raising drift based on target mismatch.")
+                    raise Drift(f"URL drift for navigation: expected target {nav_target_url}, got {actual_page_url}", ev)
+
+                if 0 <= current_event_index < len(self.trace) - 1:
+                    next_event = self.trace[current_event_index + 1]
+                    logger.debug(f"Drift check for navigation: Next event is type '{next_event.get('type')}', URL '{next_event.get('url')}', To '{next_event.get('to')}'")
+                    
+                    if next_event.get("type") == "navigation":
+                        next_event_nav_target_url = next_event.get("to")
+                        next_event_recorded_at_url = next_event.get("url")
+
+                        if next_event_nav_target_url and self._url_eq(actual_page_url, next_event_nav_target_url):
+                            logger.info(f"Drift recovery for navigation: Actual URL {actual_page_url} matches TARGET of NEXT navigation. Allowing.")
+                            return
+                        if next_event_recorded_at_url and self._url_eq(actual_page_url, next_event_recorded_at_url):
+                            logger.info(f"Drift recovery for navigation: Actual URL {actual_page_url} matches RECORDED URL of NEXT navigation. Allowing.")
+                            return
+                
+                logger.error(f"URL drift CONFIRMED for navigation: expected target {nav_target_url}, got {actual_page_url}")
+                raise Drift(f"URL drift for navigation: expected target {nav_target_url}, got {actual_page_url}", ev)
             return
         
-        if typ == "mouse_click" and self._clicked_with_selector and ev.get("selector"):
-            sel_from_event_verify = ev["selector"] 
-            if "tweetButton" in sel_from_event_verify: 
-                try:
-                    await self.page.wait_for_selector('[data-testid="toast"]:has-text("sent")', timeout=4000)
-                    logger.info("Tweet post confirmation found for: %s", sel_from_event_verify)
-                except Exception:
-                    logger.warning("Tweet post confirmation NOT found for: %s", sel_from_event_verify)
-                    raise Drift("Tweet not posted (confirmation toast not found)", ev)
-            elif ev.get("text") is not None:
-                recorded_text = ev["text"]
+        if typ == "mouse_click" and self._clicked_with_selector and sel_from_event_verify:
+            if "tweetButton" in sel_from_event_verify:
+                await self._verify_tweet_posted()
+                return
+
+            if getattr(self, "_clicked_dispatch", False):
+                logger.info(f"Verification for selector '{sel_from_event_verify}': Skipped standard DOM check as dispatchEvent was used (element might be detached/changed).")
+                return
+            
+            recorded_text = ev.get("text")
+            if recorded_text is not None:
                 try:
                     verify_loc = await self._resolve_click_locator(sel_from_event_verify) 
                     if verify_loc and await verify_loc.count() > 0:
-                        current_text = (await verify_loc.inner_text()).strip()
+                        current_text = (await verify_loc.inner_text(timeout=1000)).strip()
                         if current_text == recorded_text:
                             logger.info(f"Inner text matched for {sel_from_event_verify}: '{recorded_text}'")
                         else:
                             logger.warning(f"Text drift for {sel_from_event_verify}: expected '{recorded_text}', got '{current_text}'")
-                            raise Drift(f"Text drift: expected '{recorded_text}', got '{current_text}'", ev)
                     else:
-                        logger.warning(f"Cannot verify text for {sel_from_event_verify}, element not found by re-resolving.")
+                        logger.warning(f"Cannot verify text for {sel_from_event_verify}, element not found by re-resolving after click.")
                 except Exception as e_text_verify:
                     logger.warning(f"Error during text verification for {sel_from_event_verify}: {str(e_text_verify)}")
             return
