@@ -57,10 +57,14 @@ def list_input_trace_files(directory_path_str: str) -> List[dict]:
 async def replay_input_trace(path: str, speed: float = 1.0) -> bool:
     """Entry point used by webui's 'Replay Selected Trace' button."""
     logger.debug("Entered user_input_functions.replay_input_trace – Path: %s", path)
+    logger.debug(f"user_input_functions: Imported CustomBrowserContext class id: {id(CustomBrowserContext)}") # DEBUG
     if _browser_context is None:
         logger.error("No browser context set before replay_input_trace call")
         return False
     try:
+        logger.debug(f"user_input_functions: _browser_context object is: {repr(_browser_context)}") # DEBUG
+        logger.debug(f"user_input_functions: _browser_context object type is: {type(_browser_context)}") # DEBUG
+        logger.debug(f"user_input_functions: _browser_context object's class id: {id(type(_browser_context))}") # DEBUG
         if not isinstance(_browser_context, CustomBrowserContext):
             logger.error(f"Browser context is not a CustomBrowserContext instance: {type(_browser_context)}")
             return False
@@ -125,7 +129,7 @@ async def stop_input_tracking() -> tuple[str, Dict[str, Any], Dict[str, Any], st
         logger.error(f"Error calling _browser_context.stop_input_tracking: {str(e)}", exc_info=True)
         return f"Error: {str(e)}", start_btn_update, stop_btn_update, None, default_trace_info
 
-def get_file_info(trace_file_path: str) -> dict[str, any]:
+def get_file_info(trace_file_path: str) -> dict[str, Any]:
     global _browser_context
     try:
         if not trace_file_path or not isinstance(trace_file_path, str):
