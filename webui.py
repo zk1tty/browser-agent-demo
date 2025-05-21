@@ -1883,6 +1883,15 @@ def create_ui(theme_name="Citrus"):
                 async def replay_trace_wrapper(local_trace_path_from_ui: str, local_replay_speed: float) -> str:
                     logger.info(f"--- DEBUG replay_trace_wrapper (Replay Tab): Called with path: {local_trace_path_from_ui}, Speed: {local_replay_speed} ---")
                     global _global_browser, _global_browser_context, _last_manual_trace_path 
+                    # Log CustomBrowserContext class ID as seen by webui.py
+                    try:
+                        from src.browser.custom_context import CustomBrowserContext as WebUICustomBrowserContext # Import with alias
+                        logger.debug(f"--- DEBUG replay_trace_wrapper: WebUI's CustomBrowserContext class id: {id(WebUICustomBrowserContext)} ---")
+                        if _global_browser_context:
+                            logger.debug(f"--- DEBUG replay_trace_wrapper: _global_browser_context object's class id: {id(type(_global_browser_context))} ---")
+                    except ImportError:
+                        logger.error("--- DEBUG replay_trace_wrapper: Failed to import CustomBrowserContext in webui.py for ID logging ---")
+
                     # Context init logic (copied and adapted)
                     # ... (Assume context init logic from original replay_trace_wrapper is here)
                     # --- Start: Context Initialization Logic (adapted from start_input_tracking_with_context) ---

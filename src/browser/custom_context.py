@@ -258,8 +258,8 @@ class CustomBrowserContext(BrowserContext): # Inherit from BrowserContext
             logger.info("Input tracking is active, stopping it before closing context.")
             await self.stop_input_tracking()
         
-        if self._ctx and not self._ctx.is_closed():
-             await self._ctx.close()
+        if self._ctx:
+            await self._ctx.close()
         logger.info("CustomBrowserContext closed.")
 
     @property
