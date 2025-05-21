@@ -52,7 +52,7 @@ from src.utils.replayer import TraceReplayer, load_trace, Drift
 from src.utils.user_input_tracker import UserInputTracker
 
 from .custom_message_manager import CustomMessageManager, CustomMessageManagerSettings
-from .custom_views import CustomAgentOutput, CustomAgentStepInfo, CustomAgentState as CustomAgentStateType
+from .custom_views import CustomAgentOutput, CustomAgentStepInfo, CustomAgentState as CustomAgentStateType, CustomAgentBrain
 
 logger = logging.getLogger(__name__)
 
@@ -161,8 +161,9 @@ class CustomAgent(Agent):
         
         self.add_infos = add_infos
         # self.replay_event_file is removed, handled by task_input in run()
+        self.current_task_memory: str = "" # Initialize custom memory
 
-        self._message_manager = CustomMessageManager(
+        self._message_manager: CustomMessageManager = CustomMessageManager(
             task=self.task, # self.task is set by super().__init__
             system_message=self.settings.system_prompt_class(
                 self.available_actions,
@@ -206,7 +207,7 @@ class CustomAgent(Agent):
         self.AgentOutput = CustomAgentOutput.type_with_custom_actions(self.ActionModel)
 
     def update_step_info(
-            self, model_output: CustomAgentOutput, step_info: CustomAgentStepInfo = None
+            self, model_output: CustomAgentOutput, step_info: Optional[CustomAgentStepInfo] = None
     ):
         """
         update step info
@@ -233,45 +234,84 @@ class CustomAgent(Agent):
 
     # hint: get next action from LLM by calling llm.invoke in utils/llm.py
     @time_execution_async("--get_next_action")
-    async def get_next_action(self, input_messages: list[BaseMessage]) -> AgentOutput:
+    async def get_next_action(self, input_messages: list[BaseMessage]) -> CustomAgentOutput:
         """Get next action from LLM based on current state"""
-        fixed_input_messages = self._convert_input_messages(input_messages)
         
-        # NEW: Convert messages to serializable format without image_url
-        def remove_image_url(item):
-            """Helper function to remove image_url from a dictionary item"""
-            if isinstance(item, dict):
-                return {k: v for k, v in item.items() if k != 'image_url'}
-            return item
+        # The _convert_input_messages and cleaned_messages logic seems to have been
+        # for a specific format possibly expected by a previous _get_model_output method.
+        # We will now directly use self.llm.ainvoke with input_messages (List[BaseMessage]).
+        # The logic for removing image_urls, if still needed, would have to be 
+        # applied to input_messages before this call, or handled by the LLM itself.
 
-        cleaned_messages = []
-        for msg in fixed_input_messages:
-            if isinstance(msg, dict):
-                cleaned_messages.append(remove_image_url(msg))
-            elif hasattr(msg, 'type') and hasattr(msg, 'content'):
-                # Attempt to serialize BaseMessage if it has type and content
+        if not self.llm:
+            logger.error("LLM not initialized in CustomAgent.")
+            # Return an error structure that _parse_model_output can handle
+            # This assumes _parse_model_output can parse a JSON string error.
+            # The actual error handling might need to be more robust based on _parse_model_output's capabilities.
+            # Also, self.AgentOutput needs to be available here.
+            if not hasattr(self, 'AgentOutput') or not self.AgentOutput:
+                self._setup_action_models() # Ensure AgentOutput is set up
+            
+            # Construct a raw string that _parse_model_output can work with to produce an AgentOutput
+            # This usually involves a JSON string that looks like what the LLM would output in an error case.
+            # For now, an empty actions list and an error message in thought/state might be a way.
+            # This is a placeholder for robust error generation.
+            error_payload = {
+                "current_state": {
+                    "evaluation_previous_goal": "Error",
+                    "important_contents": "LLM not initialized.",
+                    "thought": "Critical error: LLM not initialized.",
+                    "next_goal": "Cannot proceed."
+                },
+                "action": []
+            }
+            model_output_raw = json.dumps(error_payload)
+            return self._parse_model_output(model_output_raw, self.ActionModel)
+
+        try:
+            llm_response = await self.llm.ainvoke(input_messages)
+            
+            # model_output_raw should be a string, typically the content from the LLM response.
+            # The base class's _parse_model_output is expected to handle this string.
+            if hasattr(llm_response, 'content') and llm_response.content is not None:
+                model_output_raw = str(llm_response.content)
+            elif isinstance(llm_response, AIMessage) and llm_response.tool_calls:
+                # If content is None but there are tool_calls, the parser might expect
+                # a specific string format (e.g., JSON of tool_calls) or to handle AIMessage directly.
+                # Forcing it to string for now, assuming the parser can handle stringified tool_calls
+                # or that the main information is in .content and tool_calls are metadata for the parser.
+                # This part is sensitive to how the base Agent's parser works.
+                # A common robust approach is for the LLM to put tool call JSON into the .content string.
+                # If not, serializing tool_calls to JSON is a common fallback if the parser expects it.
                 try:
-                    # Create a dictionary representation
-                    # Ensure content is serializable (especially if it's complex)
-                    content_to_serialize = msg.content
-                    if not isinstance(content_to_serialize, (str, list, dict, int, float, bool, type(None))):
-                        content_to_serialize = str(content_to_serialize) # Fallback to string
-
-                    cleaned_msg_dict = {"type": msg.type, "content": content_to_serialize}
-                    cleaned_messages.append(remove_image_url(cleaned_msg_dict))
-                except Exception as e:
-                    logger.warning(f"Could not serialize message content for type {msg.type}: {e}")
-                    cleaned_messages.append({"type": msg.type, "content": "[unserializable content]"})
+                    # Attempt to create a JSON string that might represent the tool calls
+                    # ToolCall objects in Langchain are typically TypedDicts and directly serializable.
+                    model_output_raw = json.dumps(llm_response.tool_calls)
+                except Exception as serialization_error:
+                    logger.warning(f"Could not serialize tool_calls for AIMessage: {serialization_error}. Falling back to str(AIMessage).")
+                    model_output_raw = str(llm_response) # Fallback to full string representation
             else:
-                logger.warning(f"Skipping message of unhandled type for cleaning: {type(msg)}")
+                model_output_raw = str(llm_response) # General fallback
 
-        model_output_raw = await self._get_model_output(cleaned_messages) # Use cleaned messages
+        except Exception as e:
+            logger.error(f"Error invoking LLM: {e}", exc_info=True)
+            error_payload = {
+                "current_state": {
+                    "evaluation_previous_goal": "Error",
+                    "important_contents": f"LLM invocation error: {str(e)}",
+                    "thought": f"LLM invocation error: {str(e)}",
+                    "next_goal": "Cannot proceed."
+                },
+                "action": []
+            }
+            model_output_raw = json.dumps(error_payload)
 
         # Parse the model output
-        # logger.info(f"Attempting to parse model_output_raw: {model_output_raw}")
-        parsed_output = self._parse_model_output(model_output_raw, self.ActionModel)
-        # self.update_step_info(parsed_output, None) # INTENTIONALLY REMOVED TO FIX LINTER ERROR
+        # Ensure self.ActionModel is available for the parser
+        if not hasattr(self, 'ActionModel') or not self.ActionModel:
+            self._setup_action_models() # Ensure ActionModel is set up for parsing
 
+        parsed_output = self._parse_model_output(model_output_raw, self.ActionModel)
         return parsed_output
 
     async def _run_planner(self) -> Optional[str]:
@@ -287,42 +327,78 @@ class CustomAgent(Agent):
         ]
 
         if not self.settings.use_vision_for_planner and self.settings.use_vision:
-            last_state_message: HumanMessage = planner_messages[-1]
-            # remove image from last state message
-            new_msg = ''
-            if isinstance(last_state_message.content, list):
-                for msg in last_state_message.content:
-                    if msg['type'] == 'text':
-                        new_msg += msg['text']
-                    elif msg['type'] == 'image_url':
-                        continue
-            else:
-                new_msg = last_state_message.content
+            # Type hint for last_state_message was HumanMessage, ensure planner_messages[-1] is HumanMessage or check type
+            last_planner_message = planner_messages[-1]
+            new_msg_content: Union[str, List[Dict[str, Any]]] = '' # type for new content
+            
+            if isinstance(last_planner_message, HumanMessage):
+                if isinstance(last_planner_message.content, list):
+                    processed_content_list = []
+                    for item in last_planner_message.content:
+                        if isinstance(item, dict):
+                            if item.get('type') == 'text':
+                                processed_content_list.append({'type': 'text', 'text': item.get('text', '')})
+                            # Keep other dict types if necessary, or filter image_url
+                            elif item.get('type') == 'image_url':
+                                continue # Skip image
+                            else:
+                                processed_content_list.append(item) # Keep other dicts
+                        elif isinstance(item, str):
+                            processed_content_list.append({'type': 'text', 'text': item}) # Convert str to dict
+                    new_msg_content = processed_content_list
+                    # Reconstruct new_msg from processed_content_list if needed as a single string
+                    temp_new_msg = ""
+                    for item_content in new_msg_content: # new_msg_content is List[Dict[str,Any]]
+                        if isinstance(item_content, dict) and item_content.get('type') == 'text':
+                             temp_new_msg += item_content.get('text','')
+                    new_msg = temp_new_msg
 
-            planner_messages[-1] = HumanMessage(content=new_msg)
+                elif isinstance(last_planner_message.content, str):
+                    new_msg = last_planner_message.content
+                
+                planner_messages[-1] = HumanMessage(content=new_msg if new_msg else last_planner_message.content)
+
 
         # Get planner output
         response = await self.settings.planner_llm.ainvoke(planner_messages)
         plan = str(response.content)
         # console log plan
         print(f"plan: {plan}")
-        last_state_message = self.message_manager.get_messages()[-1]
-        if isinstance(last_state_message, HumanMessage):
-            # remove image from last state message
-            if isinstance(last_state_message.content, list):
-                for msg in last_state_message.content:
-                    if msg['type'] == 'text':
-                        msg['text'] += f"\nPlanning Agent outputs plans:\n {plan}\n"
-            else:
-                last_state_message.content += f"\nPlanning Agent outputs plans:\n {plan}\n "
+        
+        last_message_from_manager = self.message_manager.get_messages()[-1]
+        if isinstance(last_message_from_manager, HumanMessage):
+            # Target last_message_from_manager (which is a HumanMessage) for modification
+            if isinstance(last_message_from_manager.content, list):
+                # Create a new list for content to avoid modifying immutable parts if any
+                new_content_list = []
+                modified = False
+                for item in last_message_from_manager.content:
+                    if isinstance(item, dict) and item.get('type') == 'text':
+                        current_text = item.get('text', '')
+                        # Create a new dict for the modified text item
+                        new_content_list.append({'type': 'text', 'text': current_text + f"\\nPlanning Agent outputs plans:\\n {plan}\\n"})
+                        modified = True
+                    else:
+                        new_content_list.append(item) # Keep other items as is
+                if modified:
+                    last_message_from_manager.content = new_content_list
+                else: # If no text item was found to append to, add a new one
+                    new_content_list.append({'type': 'text', 'text': f"\\nPlanning Agent outputs plans:\\n {plan}\\n"})
+                    last_message_from_manager.content = new_content_list
+
+            elif isinstance(last_message_from_manager.content, str):
+                last_message_from_manager.content += f"\\nPlanning Agent outputs plans:\\n {plan}\\n "
+            # If no modification happened (e.g. content was not list or str, or list had no text part)
+            # one might consider appending a new HumanMessage with the plan, but that changes history structure.
 
         try:
             plan_json = json.loads(plan.replace("```json", "").replace("```", ""))
-            logger.info(f'📋 Plans:\n{json.dumps(plan_json, indent=4)}')
+            logger.info(f'📋 Plans:\\n{json.dumps(plan_json, indent=4)}')
 
-            if hasattr(response, "reasoning_content"):
+            reasoning_content = getattr(response, "reasoning_content", None)
+            if reasoning_content:
                 logger.info("🤯 Start Planning Deep Thinking: ")
-                logger.info(response.reasoning_content)
+                logger.info(reasoning_content)
                 logger.info("🤯 End Planning Deep Thinking")
 
         except json.JSONDecodeError:
@@ -343,23 +419,23 @@ class CustomAgent(Agent):
                 if len(summary_lines) >= max_steps:
                     break
                 
-                page_title = history_item.state.page_title if history_item.state else "Unknown Page"
-                url = history_item.state.url if history_item.state else "Unknown URL"
+                page_title = getattr(history_item.state, "page_title", "Unknown Page") if history_item.state else "Unknown Page"
+                url = getattr(history_item.state, "url", "Unknown URL") if history_item.state else "Unknown URL"
                 
                 actions_summary = []
-                if history_item.action:
-                    for action_detail in history_item.action:
-                        # action_detail is ActionDetail, which has .action (BaseNamedAction)
-                        if action_detail.action:
-                            action_str = f"{action_detail.action.name}"
-                            # Add arguments if any, simplified
-                            args_str = json.dumps(action_detail.action.arguments) if action_detail.action.arguments else ""
+                current_actions = history_item.model_output.action if history_item.model_output and hasattr(history_item.model_output, 'action') else []
+                if current_actions:
+                    for act_model in current_actions: # act_model is ActionModel
+                        if hasattr(act_model, 'name'):
+                            action_str = f"{act_model.name}" # type: ignore[attr-defined]
+                            args_str = json.dumps(act_model.arguments) if hasattr(act_model, 'arguments') and act_model.arguments else "" # type: ignore[attr-defined]
                             if args_str and args_str !="{}":
                                 action_str += f"({args_str})"
                             actions_summary.append(action_str)
                 
                 action_desc = "; ".join(actions_summary) if actions_summary else "No action taken"
-                summary_line = f"- Step {history_item.metadata.step_number}: [{page_title}]({url}) - Action: {action_desc}\\n"
+                step_num_str = f"Step {history_item.metadata.step_number}" if history_item.metadata and hasattr(history_item.metadata, 'step_number') else "Step Unknown"
+                summary_line = f"- {step_num_str}: [{page_title}]({url}) - Action: {action_desc}\\\\n"
                 
                 if sum(len(s) for s in summary_lines) + len(summary_line) > max_chars and summary_lines:
                     summary_lines.append("... (history truncated due to length)")
@@ -374,10 +450,25 @@ class CustomAgent(Agent):
         return "Browsing History (Recent Steps):\\n" + "".join(reversed(summary_lines))
 
     @time_execution_async("--step")
-    async def step(self, step_info: Optional[CustomAgentStepInfo] = None) -> None:
-        if not step_info: # Should be initialized in run loop
-            logger.error("step_info not provided to CustomAgent.step")
-            return
+    async def step(self, base_step_info: Optional[AgentStepInfo] = None) -> None:
+        # The base_step_info comes from the superclass Agent's run loop.
+        # We need to create a CustomAgentStepInfo for our custom prompts.
+        
+        # if not base_step_info: # This check might be too strict if super().run() doesn't always provide it.
+        #     logger.error("base_step_info not provided to CustomAgent.step by superclass run loop.")
+        #     # Decide how to handle this: error out, or create a default?
+        #     # For now, let's assume it's provided or self.state is the source of truth for step numbers.
+        #     # If super().run() manages step counts, base_step_info.step_number would be relevant.
+        #     # If CustomAgent manages its own (self.state.n_steps), use that.
+        #     # Let's use self.state for step counts as it seems to be incremented by CustomAgent.
+        
+        current_custom_step_info = CustomAgentStepInfo(
+            step_number=self.state.n_steps,  # Use self.state.n_steps
+            max_steps=self.state.max_steps if self.state.max_steps is not None else 100, # Get from state or default
+            task=self.task,
+            add_infos=self.add_infos,
+            memory=self.current_task_memory
+        )
 
         model_output = None # Initialize to ensure it's defined for finally
         state = None # Initialize
@@ -386,18 +477,20 @@ class CustomAgent(Agent):
         step_start_time = time.time()
 
         try:
+            logger.debug("CustomAgent.step: About to call self.browser_context.get_state()")
             state = await self.browser_context.get_state()
+            logger.debug(f"CustomAgent.step: self.browser_context.get_state() returned. URL: {state.url if state else 'N/A'}")
             await self._raise_if_stopped_or_paused()
 
             history_summary_str = self._summarize_browsing_history(max_steps=5, max_chars=1500)
 
             self.message_manager.add_state_message(
-                state,
-                self.state.last_action,
-                self.state.last_result,
-                step_info,
-                self.settings.use_vision,
-                history_summary=history_summary_str
+                state=state,
+                actions=self.state.last_action, # type: ignore[call-arg]
+                result=self.state.last_result,
+                step_info=current_custom_step_info, # Use the created CustomAgentStepInfo
+                use_vision=self.settings.use_vision,
+                history_summary=history_summary_str # type: ignore[call-arg]
             )
 
             if self.settings.planner_llm and self.state.n_steps % self.settings.planner_interval == 0:
@@ -407,24 +500,37 @@ class CustomAgent(Agent):
 
             try:
                 model_output = await self.get_next_action(input_messages)
-                self.state.n_steps += 1
+                self._log_response(model_output)
+
+                # self.state.n_steps is incremented here, AFTER CustomAgentStepInfo was created with the *current* step number
+                # This is fine, as the prompt needs the current step, and n_steps tracks completed/next step.
 
                 if self.register_new_step_callback:
-                    await self.register_new_step_callback(state, model_output, self.state.n_steps)
+                    await self.register_new_step_callback(state, model_output, self.state.n_steps +1) # n_steps will be for the *next* step
 
                 if self.settings.save_conversation_path:
-                    target = self.settings.save_conversation_path + f'_{self.state.n_steps}.txt'
+                    target = self.settings.save_conversation_path + f'_{self.state.n_steps +1}.txt'
                     save_conversation(input_messages, model_output, target,
                                       self.settings.save_conversation_path_encoding)
 
                 if self.model_name != "deepseek-reasoner":
-                    self.message_manager._remove_state_message_by_index(-1)
+                    self.message_manager._remove_state_message_by_index(-1) # type: ignore[attr-defined]
                 await self._raise_if_stopped_or_paused()
             except Exception as e:
-                self.message_manager._remove_state_message_by_index(-1)
+                self.message_manager._remove_state_message_by_index(-1) # type: ignore[attr-defined]
                 raise e
 
-            result = await self.multi_act(model_output.action)
+            result = await self.multi_act(model_output.action) # type: ignore
+            
+            # Update step_info's memory (which is current_custom_step_info) with model output
+            self.update_step_info(model_output, current_custom_step_info) # type: ignore
+            # Persist the updated memory for the next step
+            self.current_task_memory = current_custom_step_info.memory
+            
+            # Increment n_steps after all actions for the current step are done and memory is updated.
+            self.state.n_steps += 1
+
+
             for ret_ in result:
                 if ret_.extracted_content and "Extracted page" in ret_.extracted_content:
                     if ret_.extracted_content[:100] not in self.state.extracted_content:
@@ -433,7 +539,9 @@ class CustomAgent(Agent):
             self.state.last_action = model_output.action
             if len(result) > 0 and result[-1].is_done:
                 if not self.state.extracted_content:
-                    self.state.extracted_content = step_info.memory
+                    # If step_info's memory was used for CustomAgentStepInfo it might be outdated here.
+                    # Use current_task_memory which should be the most up-to-date.
+                    self.state.extracted_content = self.current_task_memory 
                 result[-1].extracted_content = self.state.extracted_content
                 logger.info(f"📄 Result: {result[-1].extracted_content}")
             self.state.consecutive_failures = 0
@@ -451,28 +559,46 @@ class CustomAgent(Agent):
             result = await self._handle_step_error(e)
             self.state.last_result = result
         finally:
+            logger.debug("Entering CustomAgent.step finally block.") # DEBUG
             step_end_time = time.time()
             actions_telemetry = [a.model_dump(exclude_unset=True) for a in model_output.action] if model_output and hasattr(model_output, 'action') and model_output.action else []
+            
+            logger.debug("Attempting to capture telemetry.") # DEBUG
             self.telemetry.capture(
                 AgentStepTelemetryEvent(
                     agent_id=self.state.agent_id,
-                    step=self.state.n_steps,
+                    step=self.state.n_steps, # Note: n_steps was already incremented
                     actions=actions_telemetry,
                     consecutive_failures=self.state.consecutive_failures,
-                    step_error=[r.error for r in result if r.error] if result else ['No result'],
+                    step_error=[r.error for r in result if r.error] if result else ['No result after step execution'], # Modified for clarity
                 )
             )
+            logger.debug("Telemetry captured.") # DEBUG
+
             if not result:
+                logger.debug("No result from multi_act, returning from step.") # DEBUG
                 return
 
             if state and model_output:
+                logger.debug(f"Calling _make_history_item with model_output: {type(model_output)}, state: {type(state)}, result: {type(result)}") # DEBUG
                 metadata = StepMetadata(
-                    step_number=self.state.n_steps,
+                    step_number=self.state.n_steps, # n_steps was already incremented
                     step_start_time=step_start_time,
                     step_end_time=step_end_time,
                     input_tokens=tokens,
                 )
                 self._make_history_item(model_output, state, result, metadata)
+                logger.debug("_make_history_item finished.") # DEBUG
+            else:
+                logger.debug("Skipping _make_history_item due to no state or model_output.") # DEBUG
+            
+            # Log final state before returning from step
+            logger.debug(f"CustomAgent.step state before return: n_steps={self.state.n_steps}, stopped={self.state.stopped}, paused={self.state.paused}, consecutive_failures={self.state.consecutive_failures}, last_result_count={len(self.state.last_result) if self.state.last_result else 0}")
+            if self.state.last_result:
+                for i, res_item in enumerate(self.state.last_result):
+                    logger.debug(f"  last_result[{i}]: error='{res_item.error}', is_done={res_item.is_done}")
+
+            logger.debug("Exiting CustomAgent.step finally block.") # DEBUG
 
     # New: modified to accept ReplayTaskDetails at replay mode
     async def run(self, task_input: Union[str, ReplayTaskDetails], max_steps: int = 100) -> Optional[AgentHistoryList]:
@@ -494,12 +620,13 @@ class CustomAgent(Agent):
             # Ensure there is a page to replay on
             if not self.page or self.page.is_closed():
                 logger.info("Replay mode: self.page is not valid. Attempting to get/create a page.")
-                if self.browser_context.playwright_context and self.browser_context.playwright_context.pages:
-                    self.page = self.browser_context.playwright_context.pages[0]
+                playwright_context = getattr(self.browser_context, "playwright_context", None)
+                if playwright_context and playwright_context.pages:
+                    self.page = playwright_context.pages[0]
                     await self.page.bring_to_front()
                     logger.info(f"Replay mode: Using existing page: {self.page.url}")
-                elif self.browser_context.playwright_context:
-                    self.page = await self.browser_context.playwright_context.new_page()
+                elif playwright_context:
+                    self.page = await playwright_context.new_page()
                     logger.info(f"Replay mode: Created new page: {self.page.url}")
                 else:
                     logger.error("Replay mode: playwright_context is None, cannot create or get a page.")
@@ -516,10 +643,10 @@ class CustomAgent(Agent):
                 await replayer.play(speed=task_input.speed)
                 logger.info(f"🏁 Replay finished for trace: {task_input.trace_path}")
             except Drift as d:
-                logger.error(f"💣 DRIFT DETECTED during replay of {task_input.trace_path}: {d.message}")
+                drift_message = getattr(d, "message", str(d))
+                logger.error(f"💣 DRIFT DETECTED during replay of {task_input.trace_path}: {drift_message}")
                 if d.event:
                     logger.error(f"   Drift occurred at event: {json.dumps(d.event)}")
-                # Optionally, could save a screenshot or partial history here
             except FileNotFoundError:
                 logger.error(f"Replay mode: Trace file not found at {task_input.trace_path}")
             except Exception as e:
@@ -537,58 +664,28 @@ class CustomAgent(Agent):
                 self.task = task_input
                 self._message_manager.task = self.task # Update message manager's task
                  # Reset or update initial messages in message manager if task significantly changes
-                self._message_manager.state.history.clear() # Clear previous messages for new task
-                self._message_manager.add_initial_messages(self.task, self.add_infos)
+                if hasattr(self._message_manager.state.history, "history") and isinstance(self._message_manager.state.history.history, list): # type: ignore[attr-defined]
+                    self._message_manager.state.history.history.clear() # type: ignore[attr-defined]
+                
+                if hasattr(self._message_manager, "add_initial_messages"):
+                    self._message_manager.add_initial_messages(self.task, self.add_infos) # type: ignore
+                else:
+                    logger.warning("CustomMessageManager does not have add_initial_messages method.")
             elif not isinstance(task_input, str):
                  logger.warning(f"Autonomous run: task_input is not a string ({type(task_input)}). Using existing task: {self.task}")
 
 
             logger.info(f"Starting autonomous agent run for task: '{self.task}', max_steps: {max_steps}")
-            
+            logger.debug(f"CustomAgent: About to call super().run(max_steps={max_steps})") # DEBUG
             # Use the base Agent.run() method for the main loop and its own try/finally for telemetry etc.
             history: Optional[AgentHistoryList] = await super().run(max_steps=max_steps)
+            logger.debug(f"CustomAgent: super().run() returned. History is None: {history is None}") # DEBUG
+            if history and hasattr(history, 'history'):
+                logger.debug(f"CustomAgent: History length: {len(history.history) if history.history else 0}") # DEBUG
 
-            # After autonomous run, persist UserInputTracker history
-            if self.browser_context and hasattr(self.browser_context, 'input_tracker') and self.browser_context.input_tracker:
-                tracker: UserInputTracker = self.browser_context.input_tracker
-                
-                if tracker.events:
-                    try:
-                        trace_content = tracker.export_events_to_jsonl()
-                        
-                        # Determine save path
-                        trace_dir = "./tmp/traces" # TODO: Make this configurable
-                        os.makedirs(trace_dir, exist_ok=True)
-                        
-                        # Default filename with timestamp
-                        default_trace_filename = f"session_{time.strftime('%Y%m%d_%H%M%S')}.trace"
-                        session_trace_path = os.path.join(trace_dir, default_trace_filename)
-
-                        # Allow overriding save path via task_input if it's ReplayTaskDetails (though unlikely for saving *after* autonomous)
-                        # Or if task_input was a dict with this key (more general for future task structures)
-                        final_save_path = session_trace_path
-                        if isinstance(task_input, ReplayTaskDetails) and task_input.trace_save_path:
-                             final_save_path = task_input.trace_save_path
-                        elif isinstance(task_input, dict) and task_input.get('trace_save_path'):
-                             final_save_path = task_input['trace_save_path']
-                        
-                        with open(final_save_path, "w") as f:
-                            f.write(trace_content)
-                        logger.info(f"User input trace saved to {final_save_path}")
-                        
-                        # Optional: Clear events after saving to prevent re-saving or growing memory indefinitely
-                        # tracker.events.clear() 
-                        # logger.info("Cleared tracker events after saving.")
-
-                    except Exception as e:
-                        logger.error(f"Failed to save user input trace: {e}")
-                        traceback.print_exc()
-                elif tracker.is_recording:
-                     logger.info("User input tracker was active, but no events were recorded to save.")
-                else:
-                    logger.info("User input tracker was not active or no events to save.")
-            else:
-                logger.warning("UserInputTracker not found on browser_context or not initialized. Cannot save trace.")
+            # After autonomous run, UserInputTracker history persistence is handled by the UI's explicit stop recording.
+            # The agent itself, when run with a string task, should not be responsible for this.
+            # Removing the block that attempted to save UserInputTracker traces here.
             
             return history
 
@@ -608,21 +705,92 @@ class CustomAgent(Agent):
                 else:
                     msg_item["content"] = msg.content
             elif hasattr(msg, 'role') and hasattr(msg, 'content'): # For generic BaseMessage with role and content
-                 msg_item["role"] = msg.role
-                 msg_item["content"] = msg.content
+                 msg_item["role"] = getattr(msg, "role", "unknown")
+                 msg_item["content"] = getattr(msg, "content", "")
             else:
                 # Fallback or skip if message type is not directly convertible
                 logger.warning(f"Skipping message of unhandled type: {type(msg)}")
                 continue
 
             # Add reasoning_content for tool_code type messages if available
-            if msg_item.get("type") == "tool_code" and isinstance(msg, AIMessage) and hasattr(msg, 'reasoning_content') and msg.reasoning_content:
-                msg_item["reasoning_content"] = msg.reasoning_content
+            if msg_item.get("type") == "tool_code" and isinstance(msg, AIMessage) and hasattr(msg, 'reasoning_content'):
+                reasoning_content = getattr(msg, "reasoning_content", None)
+                if reasoning_content:
+                    msg_item["reasoning_content"] = reasoning_content
             converted_messages.append(msg_item)
         return converted_messages
 
     def _parse_model_output(self, output: str, ActionModel: Type[BaseModel]) -> CustomAgentOutput:
-        # ... existing code ...
-        # ... new implementation ...
-        # ...
-        pass
+        try:
+            if not hasattr(self, 'AgentOutput') or not self.AgentOutput:
+                self._setup_action_models() # Sets self.AgentOutput
+
+            extracted_output: Union[str, Dict[Any, Any]] = extract_json_from_model_output(output)
+            parsed_data: CustomAgentOutput
+
+            if isinstance(extracted_output, dict):
+                # If it's already a dict, assume it's valid JSON and Pydantic can handle it
+                parsed_data = self.AgentOutput.model_validate(extracted_output)
+            elif isinstance(extracted_output, str):
+                # If it's a string, try to repair it then parse
+                repaired_json_string = repair_json(extracted_output, return_objects=False)
+                if not isinstance(repaired_json_string, str):
+                    logger.error(f"repair_json with return_objects=False did not return a string. Got: {type(repaired_json_string)}. Falling back to original extracted string.")
+                    # Fallback or raise error. Forcing to string for now.
+                    repaired_json_string = str(extracted_output) # Fallback to the original extracted string if repair fails badly
+                parsed_data = self.AgentOutput.model_validate_json(repaired_json_string)
+            else:
+                raise ValueError(f"Unexpected output type from extract_json_from_model_output: {type(extracted_output)}")
+            
+            # Ensure the final parsed_data is indeed CustomAgentOutput
+            if not isinstance(parsed_data, CustomAgentOutput):
+                logger.warning(f"Parsed data is type {type(parsed_data)}, not CustomAgentOutput. Attempting conversion or default.")
+                # This might happen if self.AgentOutput.model_validate/model_validate_json doesn't return the precise
+                # CustomAgentOutput type but a compatible one (e.g. base AgentOutput).
+                # We need to ensure it has the CustomAgentBrain structure.
+                action_list = getattr(parsed_data, 'action', [])
+                current_state_data = getattr(parsed_data, 'current_state', None)
+
+                if isinstance(current_state_data, CustomAgentBrain):
+                    parsed_data = self.AgentOutput(action=action_list, current_state=current_state_data)
+                elif isinstance(current_state_data, dict):
+                    try:
+                        brain = CustomAgentBrain(**current_state_data)
+                        parsed_data = self.AgentOutput(action=action_list, current_state=brain)
+                    except Exception as brain_ex:
+                        logger.error(f"Could not construct CustomAgentBrain from dict: {brain_ex}. Falling back to error brain.")
+                        error_brain = CustomAgentBrain(
+                            evaluation_previous_goal="Error",
+                            important_contents="Failed to reconstruct agent brain during parsing.",
+                            thought="Critical error in parsing agent state.",
+                            next_goal="Retry or report error."
+                        )
+                        parsed_data = self.AgentOutput(action=action_list, current_state=error_brain)
+                else:
+                    logger.error("current_state is missing or not CustomAgentBrain/dict. Falling back to error brain.")
+                    error_brain = CustomAgentBrain(
+                        evaluation_previous_goal="Error",
+                        important_contents="Missing or invalid agent brain during parsing.",
+                        thought="Critical error in parsing agent state.",
+                        next_goal="Retry or report error."
+                    )
+                    # Ensure action_list is compatible if it came from a different model type
+                    # For simplicity, if we have to create an error brain, we might also want to clear actions
+                    # or ensure they are valid ActionModel instances. For now, passing them as is.
+                    parsed_data = self.AgentOutput(action=action_list, current_state=error_brain)
+            return parsed_data
+
+        except Exception as e:
+            logger.error(f"Error parsing model output: {e}\\nRaw output:\\n{output}", exc_info=True)
+            if not hasattr(self, 'AgentOutput') or not self.AgentOutput:
+                self._setup_action_models() # Ensure self.AgentOutput is set up for fallback
+            
+            error_brain = CustomAgentBrain(
+                evaluation_previous_goal="Error",
+                important_contents=f"Parsing error: {str(e)}",
+                thought=f"Failed to parse LLM output. Error: {str(e)}",
+                next_goal="Retry or report error."
+            )
+            return self.AgentOutput(action=[], current_state=error_brain)
+
+        # pass # Original empty implementation
