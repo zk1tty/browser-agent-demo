@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Any, Dict, List, Literal, Optional, Type
+from typing import Any, Dict, List, Literal, Optional, Type, Union
 import uuid
 from datetime import datetime
 
@@ -61,6 +61,9 @@ class CustomAgentState(BaseModel):
     last_plan: Optional[str] = None
     paused: bool = False
     stopped: bool = False
+    start_time: Optional[float] = None
+    task_input: Optional[Union[str, Any]] = None
+    max_steps: Optional[int] = None
 
     message_manager_state: MessageManagerState = Field(default_factory=MessageManagerState)
 
