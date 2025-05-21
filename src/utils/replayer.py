@@ -336,6 +336,58 @@ class TraceReplayer:
                 logger.debug("Error checking active element after typing: %s", e)
             return
 
+        # Selector verification (if applicable)
+        # This part remains unchanged from your existing logic if you have it.
+        # For example, if a click was supposed to happen on a selector:
+        if ev["type"] == "mouse_click" and ev.get("selector") and not self._clicked_with_selector:
+            # This implies the fallback XY click was used, which can be a form of drift.
+            # You might want to log this or handle it as a minor drift.
+            logger.debug(f"Verification: Click for selector '{ev['selector']}' used XY fallback.")
+
+        # URL drift check
+        current_event_expected_url = ev["url"]
+        actual_page_url = self.page.url
+
+        if not self._url_eq(actual_page_url, current_event_expected_url):
+            logger.warning(f"Potential URL drift: expected {current_event_expected_url} (from event record), got {actual_page_url} (actual browser URL).")
+
+            current_event_index = -1
+            try:
+                # Find the index of the current event 'ev' in self.trace
+                # This is okay for moderately sized traces. Consider passing index if performance becomes an issue.
+                current_event_index = self.trace.index(ev)
+            except ValueError:
+                logger.error("Critical: Could not find current event in trace for drift recovery. This shouldn't happen. Raising original drift.")
+                raise Drift(f"URL drift (and event indexing error): expected {current_event_expected_url}, got {actual_page_url}", ev)
+
+            if 0 <= current_event_index < len(self.trace) - 1:
+                next_event = self.trace[current_event_index + 1]
+                logger.debug(f"Drift check: Next event is type '{next_event.get('type')}', URL '{next_event.get('url')}', To '{next_event.get('to')}'")
+                
+                if next_event.get("type") == "navigation":
+                    next_event_target_url = next_event.get("to")
+                    next_event_recorded_at_url = next_event.get("url")
+
+                    # Condition 1: The browser is AT the target URL of the NEXT navigation event.
+                    # This means the current navigation (ev) effectively led to where next_event will go.
+                    if next_event_target_url and self._url_eq(actual_page_url, next_event_target_url):
+                        logger.info(f"Drift recovery: Actual URL {actual_page_url} matches TARGET ('to') of the NEXT navigation event. Allowing.")
+                        return
+
+                    # Condition 2: The browser is AT the URL where the NEXT navigation event was RECORDED.
+                    # This means the current navigation (ev) might have been part of a quick redirect chain,
+                    # and the page has landed on the 'url' from which the next_event was initiated.
+                    # This is relevant if next_event_target_url is different from next_event_recorded_at_url
+                    if next_event_recorded_at_url and self._url_eq(actual_page_url, next_event_recorded_at_url):
+                        logger.info(f"Drift recovery: Actual URL {actual_page_url} matches RECORDED URL ('url') of the NEXT navigation event. Allowing.")
+                        return
+            
+            # If no recovery condition met, raise the original drift error
+            logger.error(f"URL drift CONFIRMED after checks: expected {current_event_expected_url} (from event record), got {actual_page_url} (actual browser URL).")
+            raise Drift(f"URL drift: expected {current_event_expected_url}, got {actual_page_url}", ev)
+        else:
+            logger.debug(f"URL verified: Expected {current_event_expected_url}, Got {actual_page_url}")
+
     # ---------- util ----------
     @staticmethod
     def _url_eq(a, b): 
