@@ -8,7 +8,7 @@ TASK_TEMPLATES = {
 1. In the text input field, type the text:
    'hello world, I'm rebrowse.me'
 2. click 'Post'
-3. if it looks good, then finish the task.""",
+3. confirm that you can see the tweet posted on the timeline.""",
 
     "heygen_video": """go to 'heygen.ai', then:
 1. Wait for the page to load
