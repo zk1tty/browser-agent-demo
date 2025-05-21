@@ -152,20 +152,32 @@ class TraceReplayer:
 
         if sel:
             try:
-                await self.page.locator(sel).first.focus(timeout=800)
-            except Exception as e_focus:
-                logger.debug(f"Focus failed for selector '{sel}' during batch type: {e_focus.__class__.__name__}")
-                pass 
-        
-        mapped_mods = [self.MOD_MAP[m] for m in mods if m in self.MOD_MAP]
-        for m_down in mapped_mods: await self.page.keyboard.down(m_down)
-        
-        try:
-            await self.page.keyboard.type(text)
-        except Exception as e_type:
-            logger.error(f"Error during page.keyboard.type('{text}'): {e_type.__class__.__name__} - {str(e_type)}")
+                element_to_fill = self.page.locator(sel).first
+                await element_to_fill.wait_for(state='visible', timeout=5000)
+                await element_to_fill.focus(timeout=1000)
+                await asyncio.sleep(0.2) # Short delay after focus before filling
+                await element_to_fill.fill(text)
+            except Exception as e_fill:
+                logger.error(f"Error during locator.fill('{text}') for selector '{sel}': {e_fill.__class__.__name__} - {str(e_fill)}. Falling back to keyboard.type.")
+                # Fallback to original keyboard.type if fill fails for some reason
+                mapped_mods = [self.MOD_MAP[m] for m in mods if m in self.MOD_MAP]
+                for m_down in mapped_mods: await self.page.keyboard.down(m_down)
+                try:
+                    await self.page.keyboard.type(text)
+                except Exception as e_type:
+                    logger.error(f"Error during fallback page.keyboard.type('{text}'): {e_type.__class__.__name__} - {str(e_type)}")
+                for m_up in reversed(mapped_mods): await self.page.keyboard.up(m_up)
+        else:
+            # If no selector, fallback to general keyboard typing (less common for batched text)
+            logger.warning(f"Attempting to batch type '{text}' without a selector. Using page.keyboard.type().")
+            mapped_mods = [self.MOD_MAP[m] for m in mods if m in self.MOD_MAP]
+            for m_down in mapped_mods: await self.page.keyboard.down(m_down)
+            try:
+                await self.page.keyboard.type(text)
+            except Exception as e_type:
+                logger.error(f"Error during page.keyboard.type('{text}') without selector: {e_type.__class__.__name__} - {str(e_type)}")
+            for m_up in reversed(mapped_mods): await self.page.keyboard.up(m_up)
 
-        for m_up in reversed(mapped_mods): await self.page.keyboard.up(m_up)
         logger.debug(f"✅ done BATCH TYPE: '{text}' -> {log_sel_for_type}")
 
     # ------------- apply -------------
@@ -183,6 +195,17 @@ class TraceReplayer:
                 except Exception as e:
                     logger.warning("goto timeout %s – continuing for %s", e.__class__.__name__, target)
             await self.page.bring_to_front()
+            # Enhanced wait after navigation
+            try:
+                logger.debug(f"Waiting for 'load' state after navigating to {target}")
+                await self.page.wait_for_load_state('load', timeout=10000) # Wait for basic load
+                logger.debug(f"'load' state confirmed for {target}. Now waiting for networkidle.")
+                await self.page.wait_for_load_state('networkidle', timeout=3000) # Shorter networkidle (e.g., 3 seconds)
+                await asyncio.sleep(0.3) # Small buffer
+                logger.debug(f"Network idle (or timeout) confirmed for {target}")
+            except Exception as e_wait:
+                logger.warning(f"Timeout or error during page load/networkidle wait on {target}: {e_wait.__class__.__name__} - {str(e_wait)}")
+
             logger.info(f"NAVIGATED: {target}")
             return
 
