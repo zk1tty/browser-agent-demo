@@ -21,6 +21,13 @@ logging.basicConfig(
     datefmt='%Y-%m-%d %H:%M:%S'
 )
 
+# For more detailed agent logging
+logging.getLogger('src.agent.custom_agent').setLevel(logging.INFO)
+logging.getLogger('src.utils.replayer').setLevel(logging.DEBUG)
+logging.getLogger('browser_use.agent.service').setLevel(logging.INFO) # For the base agent
+logging.getLogger('browser_use.controller.service').setLevel(logging.INFO)
+logging.getLogger('browser_use.browser').setLevel(logging.INFO)
+
 logger = logging.getLogger(__name__)
 
 import gradio as gr
@@ -164,8 +171,13 @@ async def stop_agent():
 
     try:
         if _global_agent is not None:
-            # Request stop
+            logger.debug("WebUI: Calling _global_agent.stop()") # DEBUG
             _global_agent.stop()
+            if hasattr(_global_agent, 'state') and _global_agent.state is not None:
+                 logger.debug(f"WebUI: Agent state after stop() call: stopped={_global_agent.state.stopped}, paused={_global_agent.state.paused}") # DEBUG
+            else:
+                 logger.debug("WebUI: _global_agent or _global_agent.state is None after stop call attempt.")
+
         # Update UI immediately
         message = "Stop requested - the agent will halt at the next safe point"
         logger.info(f"🛑 {message}")
@@ -448,7 +460,7 @@ async def run_org_agent(
             await _global_browser_context.playwright_context.new_page()
 
         if _global_agent is None:
-            logger.info(f"Running agent task: {task}")
+            logger.info(f"OrgAgent Task: {task}")
             _global_agent = Agent(
                 task=task,
                 llm=llm,
@@ -460,7 +472,7 @@ async def run_org_agent(
                 max_input_tokens=max_input_tokens,
                 generate_gif=True
             )
-        history = await _global_agent.run(task_input=task, max_steps=max_steps)
+        history = await _global_agent.run(max_steps=max_steps)
 
         history_file = os.path.join(save_agent_history_path, f"{_global_agent.state.agent_id}.json")
         _global_agent.save_history(history_file)
@@ -624,7 +636,7 @@ async def run_custom_agent(
 
         # Create and run agent
         if _global_agent is None:
-            logger.info(f"Running agent task: {task}")
+            logger.info(f"CustomAgent Task: {task}")
             _global_agent = CustomAgent(
                 task=task,
                 add_infos=add_infos,
@@ -1042,10 +1054,10 @@ async def start_input_tracking_with_context():
                 return gr.update(value=error_message), gr.update(value=_last_manual_trace_path or "No trace yet"), gr.update(interactive=True), gr.update(interactive=False)
 
             context_needs_init = _global_browser_context is None
-            if not context_needs_init: # if _global_browser_context exists
-                # Check if it's truly usable
-                if _global_browser_context.playwright_context is None or \
-                   context_is_closed(_global_browser_context.playwright_context):
+            if not context_needs_init:
+                # Add explicit check for _global_browser_context before accessing its attributes
+                if _global_browser_context and (_global_browser_context.playwright_context is None or \
+                   context_is_closed(_global_browser_context.playwright_context)):
                     logger.info("Global browser context is unusable (closed or no Playwright context). Re-initializing context.")
                     _global_browser_context = None # Force re-init by nullifying
                     context_needs_init = True
@@ -1195,11 +1207,13 @@ async def stop_input_tracking_with_context():
 
     if not _global_browser_context or not _global_input_tracking_active:
         logger.warning("Input tracking not active or browser context not available.")
+        # This path needs to return 5 values to match Gradio's expectation
         return (
             "Tracking not active or context unavailable.", 
             gr.update(interactive=True), 
             gr.update(interactive=False), 
-            _last_manual_trace_path
+            _last_manual_trace_path,
+            {"message": "Tracking not active or context unavailable."} # Added missing 5th value for recorded_trace_info_display
         )
     
     try:
@@ -1209,21 +1223,34 @@ async def stop_input_tracking_with_context():
         _last_manual_trace_path = filepath 
         status_message = f"Input tracking stopped. Trace saved to: {filepath}" if filepath else "Input tracking stopped. No file saved."
         logger.info(status_message)
+        
+        # Get trace info for the JSON display
+        trace_info = {}
+        if filepath:
+            try:
+                trace_info = user_input_functions.get_file_info(filepath)
+            except Exception as e_info:
+                logger.error(f"Error getting trace info for display: {e_info}")
+                trace_info = {"error": f"Could not load trace info: {str(e_info)}"}
+        else:
+            trace_info = {"message": "No trace file was saved."}
+
         return (
             status_message, 
             gr.update(value="▶️ Start Recording", interactive=True), 
             gr.update(value="⏹️ Stop Recording", interactive=False), 
-            filepath
+            filepath,
+            trace_info # This is the 5th value for recorded_trace_info_display
         )
     except Exception as e:
         logger.error(f"Exception during stop_input_tracking_with_context: {e}", exc_info=True)
-        # Keep _global_input_tracking_active as is, or False, depending on desired recovery.
-        # For UI consistency, reflect that we tried to stop but failed.
+        # This path also needs to return 5 values
         return (
             f"Error stopping input tracking: {e}", 
-            gr.update(interactive=True), # Allow trying to start again
-            gr.update(interactive=True), # Allow trying to stop again (though it failed)
-            _last_manual_trace_path
+            gr.update(interactive=True), 
+            gr.update(interactive=True), 
+            _last_manual_trace_path,
+            {"error": f"Error stopping tracking: {str(e)}"} # Added missing 5th value
         )
 
 
@@ -1503,7 +1530,7 @@ def create_ui(theme_name="Citrus"):
                     label="Task Description",
                     lines=8,
                     placeholder="Enter your task here...",
-                    value="go to 'X.com', then:\n1. Wait 2 seconds after the page loads\n2. Click the 'Post' button\n3. Wait 1 second after the post dialog opens\n4. In the text input field, type the text VERY SLOWLY and CAREFULLY:\n   '  hello world, I'm https://rebrowse.me  '\n5. After typing, verify EACH CHARACTER:\n   - Starts with 'h'\n6. Only click 'Post' when you've verified every character is correct\n7. If you see a rate limit error, wait 30 seconds before retrying",
+                    value="",
                     info="Describe what you want the agent to do",
                     interactive=True,
                     elem_classes=["resizable-textbox"]
@@ -1741,7 +1768,7 @@ def create_ui(theme_name="Citrus"):
 
 
             # New: Replay Tab
-            with gr.TabItem("🔁 Replay", id=10): # New Tab
+            with gr.TabItem("▶️ Replay", id=10): # New Tab
                 gr.Markdown("### 📂 Input Trace Files")
                 
                 refresh_traces_btn = gr.Button("🔄 Refresh Trace Files", variant="secondary")
